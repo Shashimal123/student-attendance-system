@@ -1,0 +1,98 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* QR Scanner Styles */
+#qr-reader {
+  width: 100% !important;
+  min-height: 400px !important;
+  position: relative !important;
+  background-color: #000 !important;
+}
+
+#qr-reader video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  border-radius: 8px !important;
+}
+
+#qr-reader__scan_region {
+  background: transparent !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+#qr-reader__scan_region > img {
+  display: none !important;
+}
+
+#qr-reader__scan_region > video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  border-radius: 8px !important;
+}
+
+#qr-reader__status {
+  display: none !important;
+}
+
+#qr-reader__camera_selection {
+  display: none !important;
+}
+
+#qr-reader__dashboard {
+  padding: 0 !important;
+  margin: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+#qr-reader__dashboard_section {
+  padding: 0 !important;
+  margin: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+#qr-reader__dashboard_section_csr {
+  padding: 0 !important;
+  margin: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+#qr-reader__scan_region_region {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+#qr-reader__scan_region_region > video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+}
