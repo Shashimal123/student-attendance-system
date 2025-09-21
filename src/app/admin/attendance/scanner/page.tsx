@@ -35,7 +35,6 @@ export default function AttendanceScannerPage() {
   const [scannedStudent, setScannedStudent] = useState<Student | null>(null)
   const [scanning, setScanning] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
-  const [scanResult, setScanResult] = useState('')
   const [showPaymentModal, setShowPaymentModal] = useState(false)
   const [paymentStatus, setPaymentStatus] = useState<'PAID' | 'UNPAID' | 'CHECKING'>('CHECKING')
   const scannerRef = useRef<Html5QrcodeScanner | null>(null)
@@ -51,7 +50,7 @@ export default function AttendanceScannerPage() {
     if (user && user.role === 'ADMIN') {
       fetchCourses()
     }
-  }, [user])
+  }, [user, fetchCourses])
 
   useEffect(() => {
     if (selectedCourse && scannerContainerRef.current && !scannerRef.current) {
@@ -103,7 +102,7 @@ export default function AttendanceScannerPage() {
     }
   }
 
-  const onScanSuccess = async (decodedText: string, decodedResult: any) => {
+  const onScanSuccess = async (decodedText: string) => {
     if (!scanning) {
       setScanning(true)
       setScanResult(decodedText)
@@ -125,7 +124,7 @@ export default function AttendanceScannerPage() {
     }
   }
 
-  const onScanFailure = (error: any) => {
+  const onScanFailure = (error: unknown) => {
     // Handle scan failure silently
     console.warn('QR scan failed:', error)
   }

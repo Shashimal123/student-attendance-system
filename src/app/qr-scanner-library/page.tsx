@@ -1,225 +1,319 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import QrScanner from 'qr-scanner'
 
-export default function QRScannerWithLibrary() {
-  const [status, setStatus] = useState('Initializing...')
-  const [error, setError] = useState('')
-  const [scannedData, setScannedData] = useState('')
+type AttemptResult = {
+  deviceId?: string | null
+  ok: boolean
+  reason?: string
+}
+
+export default function QRScannerAutoTry() {
+  const [status, setStatus] = useState('Idle')
+  const [logs, setLogs] = useState<string[]>([])
+  const [cameras, setCameras] = useState<MediaDeviceInfo[]>([])
   const [isScanning, setIsScanning] = useState(false)
-  const videoRef = useRef<HTMLVideoElement>(null)
+  const [scannedData, setScannedData] = useState<string | null>(null)
+
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
   const qrScannerRef = useRef<QrScanner | null>(null)
+  const mountedRef = useRef(true)
 
   useEffect(() => {
+    mountedRef.current = true
     return () => {
-      if (qrScannerRef.current) {
-        qrScannerRef.current.destroy()
-      }
+      mountedRef.current = false
+      stopAll()
     }
   }, [])
 
-  const startScanning = async () => {
+  // logging helpers
+  const appendLog = (m: string) => {
+    console.log(m)
+    setLogs((s) => [new Date().toLocaleTimeString() + ' — ' + m, ...s].slice(0, 50))
+  }
+
+  const stopAll = () => {
+    appendLog('stopAll — cleaning up')
+    if (qrScannerRef.current) {
+      try { qrScannerRef.current.stop(); qrScannerRef.current.destroy() } catch {}
+      qrScannerRef.current = null
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop())
+      streamRef.current = null
+    }
+    if (videoRef.current) {
+      try { videoRef.current.srcObject = null } catch {}
+    }
+    setIsScanning(false)
+    setStatus('Stopped')
+  }
+
+  // minimal permission-get to allow device labels (not necessary but helpful)
+  const ensureLabels = async () => {
     try {
-      setStatus('Starting QR scanner...')
-      setError('')
-      
+      appendLog('Requesting minimal permission to reveal labels (if needed)')
+      const s = await navigator.mediaDevices.getUserMedia({ video: true })
+      s.getTracks().forEach((t) => t.stop())
+    } catch (err) {
+      appendLog('Permission hint failed (user may deny). Continuing to enumerate anyway.')
+    }
+  }
+
+  const enumerate = async () => {
+    try {
+      await ensureLabels()
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const videoDevices = devices.filter((d) => d.kind === 'videoinput')
+      setCameras(videoDevices)
+      appendLog(`enumerateDevices found ${videoDevices.length} video input(s)`)
+    } catch (err) {
+      appendLog('enumerateDevices error: ' + (err instanceof Error ? err.message : String(err)))
+    }
+  }
+
+  // Try to attach a stream for a specific constraint (deviceId or facingMode)
+  const tryStream = async (constraints: MediaStreamConstraints, attemptLabel: string, timeoutMs = 4000): Promise<AttemptResult> => {
+    appendLog(`Attempting stream: ${attemptLabel}`)
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(constraints)
+      appendLog(`Got stream, tracks: ${stream.getVideoTracks().map(t => t.label || t.id).join(', ')}`)
+      // attach
       if (!videoRef.current) {
-        throw new Error('Video element not found')
+        stream.getTracks().forEach((t) => t.stop())
+        return { ok: false, reason: 'no video element' }
+      }
+      streamRef.current = stream
+      videoRef.current.srcObject = stream
+      videoRef.current.muted = true
+      videoRef.current.playsInline = true
+      try { (videoRef.current as any).webkitPlaysInline = true } catch {}
+      // Wait for video to start playing or timeout
+      const playPromise = (async () => {
+        try {
+          await videoRef.current!.play()
+        } catch (err) {
+          // play may reject due to autoplay policy; but we still check loadedmetadata/onplaying
+          appendLog('video.play() rejected or blocked — will wait for events')
+        }
+      })()
+
+      const waiting = new Promise<AttemptResult>((resolve) => {
+        let done = false
+        const cleanup = () => {
+          if (done) return
+          done = true
+          videoRef.current?.removeEventListener('playing', onPlaying)
+          videoRef.current?.removeEventListener('loadeddata', onLoadedData)
+          clearTimeout(timer)
+        }
+        const onPlaying = () => {
+          cleanup()
+          appendLog('Video playing event fired')
+          resolve({ ok: true })
+        }
+        const onLoadedData = () => {
+          // some browsers fire loadeddata before playing
+          const hasSize = (videoRef.current?.videoWidth || 0) > 0
+          appendLog(`loadeddata fired, size ${videoRef.current?.videoWidth}x${videoRef.current?.videoHeight}`)
+          if (hasSize) {
+            cleanup()
+            resolve({ ok: true })
+          }
+        }
+        videoRef.current?.addEventListener('playing', onPlaying)
+        videoRef.current?.addEventListener('loadeddata', onLoadedData)
+        const timer = window.setTimeout(() => {
+          cleanup()
+          resolve({ ok: false, reason: 'timeout waiting for video frames' })
+        }, timeoutMs)
+      })
+
+      // Wait for either play to progress/waiting promise
+      const r = await waiting
+      if (r.ok) {
+        appendLog('Video appears to be rendering frames')
+        return { ok: true }
+      } else {
+        // draw snapshot for debug if possible
+        try {
+          if (canvasRef.current && videoRef.current) {
+            canvasRef.current.width = 320
+            canvasRef.current.height = 240
+            const ctx = canvasRef.current.getContext('2d')
+            if (ctx) {
+              ctx.drawImage(videoRef.current, 0, 0, 320, 240)
+              appendLog('Drew snapshot to canvas for debug')
+            }
+          }
+        } catch (err) {
+          appendLog('Snapshot draw failed: ' + (err instanceof Error ? err.message : String(err)))
+        }
+        // Stop tracks before returning
+        stream.getTracks().forEach((t) => t.stop())
+        streamRef.current = null
+        return { ok: false, reason: r.reason }
+      }
+    } catch (err: unknown) {
+      appendLog('getUserMedia failed: ' + (err instanceof Error ? err.message : String(err)))
+      return { ok: false, reason: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  // Try all cameras sequentially (preferred). If none works, try facingMode fallback
+  const tryAllCameras = async () => {
+    setLogs([])
+    setScannedData(null)
+    setStatus('Trying cameras...')
+    appendLog('Starting auto camera attempts')
+    stopAll()
+    try {
+      await enumerate()
+      // if no cameras found, try facingMode directly
+      if (cameras.length === 0) {
+        appendLog('No camera devices found — trying facingMode fallback')
+        const res = await tryStream({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } } }, 'facingMode fallback', 5000)
+        if (res.ok) {
+          appendLog('Fallback video working')
+          onVideoReadyAndStartScanner()
+          return
+        } else {
+          setStatus('No usable camera found')
+          appendLog('FacingMode fallback failed: ' + (res.reason ?? 'unknown'))
+          return
+        }
       }
 
-      // Create QR scanner instance
+      // try each camera deviceId
+      for (const cam of cameras) {
+        if (!mountedRef.current) return
+        appendLog(`Trying device: ${cam.deviceId} (${cam.label || 'no-label'})`)
+        const res = await tryStream({ video: { deviceId: { exact: cam.deviceId }, width: { ideal: 1280 } } }, `device ${cam.deviceId}`, 4500)
+        if (res.ok) {
+          appendLog(`Device ${cam.deviceId} worked`)
+          onVideoReadyAndStartScanner()
+          return
+        } else {
+          appendLog(`Device ${cam.deviceId} failed: ${res.reason}`)
+        }
+      }
+
+      // if none worked, try facingMode
+      appendLog('All deviceId attempts failed — trying facingMode fallback')
+      const r2 = await tryStream({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } } }, 'facingMode (last attempt)', 5000)
+      if (r2.ok) {
+        appendLog('FacingMode fallback worked')
+        onVideoReadyAndStartScanner()
+      } else {
+        appendLog('FacingMode fallback failed: ' + (r2.reason ?? 'unknown'))
+        setStatus('No camera produced frames — check permissions/HTTPS/other app using camera')
+      }
+    } catch (err) {
+      appendLog('tryAllCameras error: ' + (err instanceof Error ? err.message : String(err)))
+      setStatus('Error during camera attempts')
+    }
+  }
+
+  // Called when video is confirmed to be rendering frames
+  const onVideoReadyAndStartScanner = () => {
+    setStatus('Video streaming — starting QR scanner')
+    appendLog('Attaching qr-scanner now')
+    if (!videoRef.current) return
+    // start qr scanner
+    try {
       const qrScanner = new QrScanner(
         videoRef.current,
         (result) => {
-          console.log('QR Code detected:', result.data)
-          setScannedData(result.data)
-          setStatus('QR Code detected!')
-          setIsScanning(false)
-          
-          // Stop scanning
-          qrScanner.stop()
-          qrScanner.destroy()
+          const data = (result as any)?.data ?? String(result)
+          appendLog('QR detected: ' + data)
+          setScannedData(data)
+          setStatus('QR detected')
+          // stop scanner and stream but do not auto-restart automatically here
+          try { qrScanner.stop(); qrScanner.destroy() } catch {}
           qrScannerRef.current = null
-          
-          // Auto-restart after 3 seconds
-          setTimeout(() => {
-            startScanning()
-          }, 3000)
+          stopAll()
         },
-        {
-          highlightScanRegion: true,
-          highlightCodeOutline: true,
-          preferredCamera: 'environment'
-        }
+        { highlightScanRegion: true, highlightCodeOutline: true }
       )
-
       qrScannerRef.current = qrScanner
-      
-      // Start scanning
-      await qrScanner.start()
-      setIsScanning(true)
-      setStatus('Camera ready - Scanning for QR codes...')
-      
-    } catch (err: any) {
-      console.error('QR Scanner error:', err)
-      setError(`${err.name}: ${err.message}`)
-      setStatus('QR Scanner failed to start')
+      qrScanner.start().then(() => {
+        setIsScanning(true)
+        setStatus('Scanning for QR codes...')
+        appendLog('qr-scanner started')
+      }).catch((e) => {
+        appendLog('qr-scanner.start() error: ' + (e instanceof Error ? e.message : String(e)))
+      })
+    } catch (err) {
+      appendLog('Failed to attach qr-scanner: ' + (err instanceof Error ? err.message : String(err)))
     }
   }
 
-  const stopScanning = () => {
-    if (qrScannerRef.current) {
-      qrScannerRef.current.stop()
-      qrScannerRef.current.destroy()
-      qrScannerRef.current = null
-    }
-    setIsScanning(false)
-    setStatus('Scanner stopped')
+  // Manual stop
+  const handleStop = () => {
+    stopAll()
+    setStatus('Stopped by user')
   }
 
-  const manualQRInput = () => {
-    const input = prompt('Enter QR code data manually:')
-    if (input) {
-      setScannedData(input)
-      setStatus('QR Code detected!')
-    }
-  }
-
+  // UI and quick checklist included below
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
-      <div className="max-w-4xl mx-auto">
-        <h1 className="text-3xl font-bold mb-8">QR Scanner with Library</h1>
-        
-        {/* Status */}
-        <div className="bg-white p-6 rounded-lg shadow-md mb-6">
-          <h2 className="text-xl font-semibold mb-4">Status</h2>
-          <p className="text-lg">
-            <span className={status.includes('detected') ? 'text-green-600' : 
-                           status.includes('ready') || status.includes('Scanning') ? 'text-blue-600' : 
-                           'text-gray-600'}>
-              {status}
-            </span>
-          </p>
-          {error && (
-            <p className="text-red-600 mt-2">Error: {error}</p>
-          )}
-        </div>
+    <div className="p-6 max-w-5xl mx-auto">
+      <h1 className="text-2xl font-bold mb-4">QR Scanner — automatic camera trials</h1>
 
-        {/* Controls */}
-        <div className="bg-white p-6 rounded-lg shadow-md mb-6">
-          <h2 className="text-xl font-semibold mb-4">Scanner Controls</h2>
-          <div className="flex space-x-4">
-            <button
-              onClick={startScanning}
-              disabled={isScanning}
-              className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400"
-            >
-              {isScanning ? 'Scanning...' : 'Start QR Scanner'}
-            </button>
-            <button
-              onClick={stopScanning}
-              disabled={!isScanning}
-              className="bg-red-600 text-white px-6 py-3 rounded-lg hover:bg-red-700 disabled:bg-gray-400"
-            >
-              Stop Scanner
-            </button>
-            <button
-              onClick={manualQRInput}
-              className="bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700"
-            >
-              Manual Input
-            </button>
+      <div className="flex gap-2 mb-4">
+        <button onClick={tryAllCameras} className="bg-indigo-600 text-white px-4 py-2 rounded">Try all cameras</button>
+        <button onClick={enumerate} className="bg-gray-200 px-3 py-2 rounded">Detect cameras</button>
+        <button onClick={handleStop} className="bg-red-600 text-white px-3 py-2 rounded">Stop</button>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-4">
+        <div className="bg-white p-4 rounded shadow">
+          <div className="font-semibold mb-2">Camera preview</div>
+          <video
+            ref={videoRef}
+            autoPlay
+            muted
+            playsInline
+            className="w-full bg-black rounded"
+            style={{ height: 360, objectFit: 'cover' }}
+          />
+          <canvas ref={canvasRef} className="mt-2 border" style={{ width: 320, height: 240 }} />
+          <div className="mt-2 text-sm text-gray-600">
+            <strong>Status:</strong> {status}
+          </div>
+          <div className="mt-1 text-xs text-gray-500">
+            If video remains black after "Try all cameras": check (1) HTTPS or localhost, (2) browser camera permission for this site, (3) other apps using camera, (4) try another browser.
           </div>
         </div>
 
-        {/* Camera Preview */}
-        <div className="bg-white p-6 rounded-lg shadow-md mb-6">
-          <h2 className="text-xl font-semibold mb-4">QR Scanner Preview</h2>
-          <div className="relative">
-            <video
-              ref={videoRef}
-              className="w-full h-64 bg-black rounded-lg"
-            />
-            
-            {/* Scanning indicator */}
-            {isScanning && (
-              <div className="absolute top-4 right-4">
-                <div className="flex items-center space-x-2 bg-green-500 text-white px-3 py-2 rounded-lg">
-                  <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
-                  <span className="text-sm">Scanning</span>
-                </div>
-              </div>
-            )}
+        <div className="bg-white p-4 rounded shadow">
+          <div className="font-semibold mb-2">Debug logs</div>
+          <div className="text-xs h-80 overflow-auto bg-gray-50 p-2 rounded">
+            {logs.length === 0 ? <div className="text-gray-400">No logs yet</div> :
+              logs.map((l, i) => <div key={i} className="pb-1 border-b last:border-b-0">{l}</div>)
+            }
           </div>
-          <p className="text-sm text-gray-600 mt-2">
-            {isScanning ? 'Position QR code within the camera view' : 'Click "Start QR Scanner" to begin'}
-          </p>
-        </div>
 
-        {/* Scan Results */}
-        {scannedData && (
-          <div className="bg-white p-6 rounded-lg shadow-md mb-6">
-            <h2 className="text-xl font-semibold mb-4">Scan Results</h2>
-            <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
-              <p className="text-green-800">
-                <strong>Scanned:</strong> {scannedData}
-              </p>
-              <p className="text-sm text-green-600 mt-2">
-                Scanner will restart automatically in 3 seconds...
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Test QR Codes */}
-        <div className="bg-white p-6 rounded-lg shadow-md mb-6">
-          <h2 className="text-xl font-semibold mb-4">Test QR Codes</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="p-4 bg-gray-50 rounded-lg">
-              <h3 className="font-semibold mb-2">Student QR Codes:</h3>
-              <ul className="text-sm space-y-1">
-                <li>• STU001-test123</li>
-                <li>• STU002-test456</li>
-                <li>• STU003-test789</li>
-                <li>• STU004-testabc</li>
-                <li>• STU005-testdef</li>
-              </ul>
-            </div>
-            <div className="p-4 bg-gray-50 rounded-lg">
-              <h3 className="font-semibold mb-2">Instructions:</h3>
-              <ol className="text-sm space-y-1">
-                <li>1. Start the scanner</li>
-                <li>2. Use "Manual Input" to test</li>
-                <li>3. Or create QR codes online</li>
-                <li>4. Point camera at QR code</li>
-              </ol>
-            </div>
+          <div className="mt-4 text-sm">
+            <div><strong>Detected cameras:</strong> {cameras.length}</div>
+            <div className="break-words"><strong>Last scanned:</strong> {scannedData ?? '-'}</div>
           </div>
         </div>
+      </div>
 
-        {/* Instructions */}
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
-          <h2 className="text-xl font-semibold mb-4 text-blue-800">How to Use</h2>
-          <ol className="space-y-2 text-blue-700">
-            <li>1. Click "Start QR Scanner" to begin</li>
-            <li>2. Allow camera access when prompted</li>
-            <li>3. Position QR code within the camera view</li>
-            <li>4. QR codes will be detected automatically</li>
-            <li>5. Use "Manual Input" to test with text input</li>
-            <li>6. Scanner restarts automatically after each scan</li>
-          </ol>
-          
-          <div className="mt-4 p-3 bg-green-100 border border-green-300 rounded">
-            <p className="text-green-800 text-sm">
-              <strong>Success!</strong> This scanner uses the qr-scanner library which should work 
-              much better than the previous html5-qrcode library.
-            </p>
-          </div>
-        </div>
+      <div className="mt-4 bg-yellow-50 border border-yellow-200 p-3 rounded text-sm">
+        Quick checklist:
+        <ol className="ml-4 list-decimal mt-1">
+          <li>Run on <strong>https://</strong> or <strong>http://localhost</strong>.</li>
+          <li>Allow camera access when browser prompt appears (check site settings if denied).</li>
+          <li>Close other apps (Zoom, Teams) that may be using the camera.</li>
+          <li>Try another browser (Chrome/Edge/Firefox). Safari often needs explicit inline attribute (handled).</li>
+          <li>If still failing, paste the <em>top 5</em> logs from the Debug logs pane here and tell me your OS & browser version.</li>
+        </ol>
       </div>
     </div>
   )
 }
-
-
