@@ -1,6 +1,6 @@
 // src/app/api/attendance/mark/route.ts
 import { NextResponse } from 'next/server'
-import prisma from '@/lib/prisma' // <- adjust to your prisma import
+import { prisma } from '@/lib/prisma'
 
 type ReqBody = {
   studentId?: string   // scanned string or extracted ID
@@ -46,7 +46,7 @@ export async function POST(req: Request) {
     let course = null
     if (/^\d+$/.test(String(courseId))) {
       // numeric id
-      course = await prisma.course.findUnique({ where: { id: Number(courseId) } })
+      course = await prisma.course.findUnique({ where: { id: String(courseId) } })
     } else {
       // assume course code (e.g. "MATH101")
       course = await prisma.course.findUnique({ where: { code: String(courseId) } })
@@ -114,7 +114,6 @@ export async function POST(req: Request) {
       data: {
         studentId: student.id,
         courseId: course.id,
-        markedBy: markedBy ?? null,
         date: todayStr,
         status: 'PRESENT'
       }
@@ -122,7 +121,7 @@ export async function POST(req: Request) {
 
     // Return success with student name so front-end can display
     return NextResponse.json(
-      { success: true, message: 'Attendance marked', attendanceId: rec.id, studentName: student.name ?? null },
+      { success: true, message: 'Attendance marked', attendanceId: rec.id, studentName: `${student.firstName} ${student.lastName}` },
       { status: 200 }
     )
   } catch (err: any) {

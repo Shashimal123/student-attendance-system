@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react'
 import QrScanner from 'qr-scanner'
+import { useAuth } from '@/contexts/AuthContext'
 
 interface Props {
   courseId?: string | null // pass selected course id or code from parent
@@ -12,6 +13,7 @@ interface Props {
 type CourseItem = { id: string | number; code?: string; name?: string }
 
 export default function QRScannerWithAPI({ courseId: initialCourseId = null, markedBy = null, className = '' }: Props) {
+  const { user } = useAuth()
   const [status, setStatus] = useState('Idle')
   const [error, setError] = useState<string | null>(null)
   const [isScanning, setIsScanning] = useState(false)
@@ -20,6 +22,7 @@ export default function QRScannerWithAPI({ courseId: initialCourseId = null, mar
   const [courseId, setCourseId] = useState<string | null>(initialCourseId)
   const [courses, setCourses] = useState<CourseItem[]>([])
   const [loadingCourses, setLoadingCourses] = useState(false)
+  const [searchTerm, setSearchTerm] = useState('')
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const qrScannerRef = useRef<QrScanner | null>(null)
@@ -44,22 +47,42 @@ export default function QRScannerWithAPI({ courseId: initialCourseId = null, mar
   useEffect(() => {
     let mounted = true
     const fetchCourses = async () => {
+      if (!user) {
+        setLoadingCourses(false)
+        return
+      }
+
       setLoadingCourses(true)
       try {
-        const res = await fetch('/api/courses', { method: 'GET', credentials: 'include' })
+        const token = localStorage.getItem('token')
+        if (!token) {
+          console.warn('No authentication token found')
+          setLoadingCourses(false)
+          return
+        }
+
+        const res = await fetch('/api/courses', { 
+          method: 'GET', 
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          }
+        })
         if (!mounted) return
         if (!res.ok) {
+          console.warn('Failed to fetch courses:', res.status, res.statusText)
           setLoadingCourses(false)
           return
         }
         const json = await res.json().catch(() => null)
         if (!json) {
+          console.warn('Invalid JSON response from courses API')
           setLoadingCourses(false)
           return
         }
         // expect array of { id, code, name } or similar
         if (Array.isArray(json)) {
-          const mapped = json.map((c: any) => ({
+          const mapped = json.map((c: { id?: string | number; courseId?: string; code?: string; courseCode?: string; name?: string; title?: string }) => ({
             id: c.id ?? c.courseId ?? c.code ?? String(c).slice(0, 8),
             code: c.code ?? c.courseCode ?? undefined,
             name: c.name ?? c.title ?? undefined
@@ -70,6 +93,8 @@ export default function QRScannerWithAPI({ courseId: initialCourseId = null, mar
             const idOrCode = mapped[0].code ?? String(mapped[0].id)
             setCourseId(String(idOrCode))
           }
+        } else {
+          console.warn('Courses API returned non-array response:', json)
         }
       } catch (e) {
         // ignore errors; leave courses empty so manual input remains available
@@ -83,9 +108,7 @@ export default function QRScannerWithAPI({ courseId: initialCourseId = null, mar
     return () => {
       mounted = false
     }
-    // intentionally only run on mount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [user, initialCourseId, courseId])
 
   // Helper: parse the scanned payload into a studentId
   const parseStudentId = (raw: string): string | null => {
@@ -98,7 +121,7 @@ export default function QRScannerWithAPI({ courseId: initialCourseId = null, mar
       try {
         const parsed = JSON.parse(raw)
         if (parsed?.studentId && typeof parsed.studentId === 'string') return parsed.studentId
-      } catch (e) {
+      } catch {
         // ignore
       }
     }
@@ -110,7 +133,7 @@ export default function QRScannerWithAPI({ courseId: initialCourseId = null, mar
         const seg = u.pathname.split('/').filter(Boolean).pop()
         if (seg) raw = seg
       }
-    } catch (e) {
+    } catch {
       // ignore
     }
 
@@ -143,13 +166,26 @@ export default function QRScannerWithAPI({ courseId: initialCourseId = null, mar
       return { ok: false, msg: 'No course selected' }
     }
 
-    const payload = { studentId, courseId, markedBy }
+    if (!user) {
+      showError('Please login to mark attendance.')
+      return { ok: false, msg: 'Not authenticated' }
+    }
+
+    const token = localStorage.getItem('token')
+    if (!token) {
+      showError('Authentication token not found. Please login again.')
+      return { ok: false, msg: 'No authentication token' }
+    }
+
+    const payload = { studentId, courseId, status: 'PRESENT', markedBy: markedBy || user.teacherId || user.adminId }
 
     try {
       const res = await fetch('/api/attendance/mark', {
         method: 'POST',
-        credentials: 'include', // keep if you rely on cookies/sessions
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
         body: JSON.stringify(payload)
       })
       const json = await res.json().catch(() => ({}))
@@ -197,17 +233,18 @@ export default function QRScannerWithAPI({ courseId: initialCourseId = null, mar
     // resume after cooldown (3s)
     if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current)
     resumeTimerRef.current = window.setTimeout(async () => {
-      try {
-        qrScannerRef.current?.resume()
-        setIsScanning(true)
-        setStatus('Camera ready - scanning...')
-      } catch (err) {
+        try {
+          // QrScanner doesn't have resume method, use start instead
+          await qrScannerRef.current?.start()
+          setIsScanning(true)
+          setStatus('Camera ready - scanning...')
+        } catch (err) {
         console.warn('resume failed, trying start()', err)
         try {
           await qrScannerRef.current?.start()
           setIsScanning(true)
           setStatus('Camera ready - scanning...')
-        } catch (e) {
+        } catch {
           showError('Unable to resume scanner')
         }
       } finally {
@@ -254,47 +291,153 @@ export default function QRScannerWithAPI({ courseId: initialCourseId = null, mar
     setStatus('Scanner stopped')
   }
 
+  // Show login prompt if not authenticated
+  if (!user) {
+    return (
+      <div className={className}>
+        <div className="bg-white p-6 rounded shadow-md">
+          <h3 className="font-semibold text-lg mb-2">QR Code Scanner</h3>
+          <div className="p-4 bg-yellow-50 border border-yellow-200 rounded">
+            <p className="text-yellow-800">Please login to use the QR scanner.</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className={className}>
       <div className="bg-white p-6 rounded shadow-md">
-        <h3 className="font-semibold text-lg mb-2">QR Code Scanner</h3>
+        <div className="flex justify-between items-center mb-2">
+          <h3 className="font-semibold text-lg">QR Code Scanner</h3>
+          <div className="text-xs text-gray-500">
+            Logged in as: {user.role} ({user.email})
+          </div>
+        </div>
 
-        {/* Course selection - dropdown if courses available, otherwise input */}
+        {/* Course selection - enhanced with search */}
         <div className="mb-3">
           <label className="block text-sm text-gray-600 mb-1">Selected Course</label>
 
           {loadingCourses ? (
             <div className="px-3 py-2 border rounded bg-gray-50 text-sm text-gray-500">Loading courses...</div>
           ) : courses.length > 0 ? (
-            <select
-              value={courseId ?? ''}
-              onChange={(e) => setCourseId(e.target.value || null)}
-              className="w-full border px-3 py-2 rounded"
-              disabled={!!initialCourseId}
-            >
-              <option value="">{initialCourseId ? initialCourseId : 'Select a course'}</option>
-              {courses.map((c) => {
-                const label = c.name ? `${c.name} (${c.code ?? c.id})` : `${c.code ?? c.id}`
-                const value = c.code ?? String(c.id)
-                return (
-                  <option key={String(c.id)} value={value}>
-                    {label}
-                  </option>
-                )
-              })}
-            </select>
+            <div className="space-y-2">
+              {/* Search input */}
+              <input
+                type="text"
+                placeholder="Search courses..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full border px-3 py-2 rounded text-sm"
+                disabled={!!initialCourseId}
+              />
+              
+              {/* Course dropdown */}
+              <select
+                value={courseId ?? ''}
+                onChange={(e) => {
+                  const selectedCourseId = e.target.value || null
+                  setCourseId(selectedCourseId)
+                  // Clear error when course is selected
+                  if (selectedCourseId) {
+                    setError(null)
+                    setStatus('Course selected: ' + (courses.find(c => (c.code ?? String(c.id)) === selectedCourseId)?.name || selectedCourseId))
+                  }
+                }}
+                className="w-full border px-3 py-2 rounded"
+                disabled={!!initialCourseId}
+              >
+                <option value="">{initialCourseId ? initialCourseId : 'Select a course'}</option>
+                {courses
+                  .filter(c => {
+                    if (!searchTerm) return true
+                    const searchLower = searchTerm.toLowerCase()
+                    return (
+                      c.name?.toLowerCase().includes(searchLower) ||
+                      c.code?.toLowerCase().includes(searchLower) ||
+                      String(c.id).toLowerCase().includes(searchLower)
+                    )
+                  })
+                  .map((c) => {
+                    const label = c.name ? `${c.name} (${c.code ?? c.id})` : `${c.code ?? c.id}`
+                    const value = c.code ?? String(c.id)
+                    return (
+                      <option key={String(c.id)} value={value}>
+                        {label}
+                      </option>
+                    )
+                  })}
+              </select>
+              
+              {/* Quick course buttons */}
+              <div className="flex flex-wrap gap-1">
+                {courses
+                  .filter(c => {
+                    if (!searchTerm) return false
+                    const searchLower = searchTerm.toLowerCase()
+                    return (
+                      c.name?.toLowerCase().includes(searchLower) ||
+                      c.code?.toLowerCase().includes(searchLower) ||
+                      String(c.id).toLowerCase().includes(searchLower)
+                    )
+                  })
+                  .slice(0, 3) // Show max 3 quick options
+                  .map((c) => {
+                    const value = c.code ?? String(c.id)
+                    const isSelected = courseId === value
+                    return (
+                      <button
+                        key={String(c.id)}
+                        onClick={() => {
+                          setCourseId(value)
+                          setError(null)
+                          setStatus('Course selected: ' + (c.name || value))
+                        }}
+                        className={`px-2 py-1 text-xs rounded border ${
+                          isSelected 
+                            ? 'bg-blue-100 border-blue-300 text-blue-700' 
+                            : 'bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100'
+                        }`}
+                        disabled={!!initialCourseId}
+                      >
+                        {c.code ?? c.id}
+                      </button>
+                    )
+                  })}
+              </div>
+            </div>
           ) : (
-            <input
-              value={courseId ?? ''}
-              onChange={(e) => setCourseId(e.target.value || null)}
-              placeholder="Enter course id or code (e.g. MATH101)"
-              className="w-full border px-3 py-2 rounded"
-              readOnly={!!initialCourseId}
-            />
+            <div className="space-y-2">
+              <input
+                value={courseId ?? ''}
+                onChange={(e) => {
+                  const selectedCourseId = e.target.value || null
+                  setCourseId(selectedCourseId)
+                  // Clear error when course is entered
+                  if (selectedCourseId) {
+                    setError(null)
+                    setStatus('Course entered: ' + selectedCourseId)
+                  }
+                }}
+                placeholder="Enter course id or code (e.g. MATH101)"
+                className="w-full border px-3 py-2 rounded"
+                readOnly={!!initialCourseId}
+              />
+              <div className="text-xs text-gray-500">
+                No courses found — enter course code or DB id manually
+              </div>
+            </div>
           )}
 
-          {!initialCourseId && !loadingCourses && courses.length === 0 && (
-            <small className="text-xs text-gray-500">No courses found — enter course code or DB id manually</small>
+          {/* Current selection display */}
+          {courseId && (
+            <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded text-sm">
+              <span className="text-green-700">✓ Selected: </span>
+              <span className="font-medium">
+                {courses.find(c => (c.code ?? String(c.id)) === courseId)?.name || courseId}
+              </span>
+            </div>
           )}
         </div>
 
