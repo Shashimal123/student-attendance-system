@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withAdminAuth } from '@/lib/middleware'
 import { prisma } from '@/lib/prisma'
 
-async function handler(req: NextRequest, { params }: { params: { id: string } }) {
-  const courseId = params.id
+async function handler(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const resolvedParams = await params
+  const courseId = resolvedParams.id
 
   if (req.method === 'PUT') {
     try {

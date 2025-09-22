@@ -2,14 +2,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withAdminAuth } from '@/lib/middleware'
 import { prisma } from '@/lib/prisma'
 
-async function handler(req: NextRequest, { params }: { params: { id: string } }) {
+async function handler(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (req.method !== 'PUT') {
     return NextResponse.json({ error: 'Method not allowed' }, { status: 405 })
   }
 
   try {
     const { paymentMethod, reference } = await req.json()
-    const paymentId = params.id
+    const resolvedParams = await params
+    const paymentId = resolvedParams.id
 
     const payment = await prisma.payment.findUnique({
       where: { id: paymentId },

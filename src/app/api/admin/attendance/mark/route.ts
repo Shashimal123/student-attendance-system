@@ -12,7 +12,7 @@ async function handler(req: NextRequest) {
 
     if (!studentId || !courseId || !status) {
       return NextResponse.json(
-        { error: 'Student ID, Course ID, and Status are required' },
+        { success: false, code: 'INVALID_PAYLOAD', message: 'Student ID, Course ID, and Status are required' },
         { status: 400 }
       )
     }
@@ -29,14 +29,14 @@ async function handler(req: NextRequest) {
 
     if (!student) {
       return NextResponse.json(
-        { error: 'Student not found' },
+        { success: false, code: 'NOT_FOUND', message: 'Student not found' },
         { status: 404 }
       )
     }
 
     if (student.enrollments.length === 0) {
       return NextResponse.json(
-        { error: 'Student is not enrolled in this course' },
+        { success: false, code: 'NOT_ENROLLED', message: 'Student is not enrolled in this course' },
         { status: 400 }
       )
     }
@@ -60,8 +60,8 @@ async function handler(req: NextRequest) {
 
     if (existingAttendance) {
       return NextResponse.json(
-        { error: 'Attendance already marked for today' },
-        { status: 400 }
+        { success: false, code: 'ALREADY_MARKED', message: 'Attendance already marked for today' },
+        { status: 409 }
       )
     }
 
@@ -94,19 +94,13 @@ async function handler(req: NextRequest) {
     return NextResponse.json({
       success: true,
       message: 'Attendance marked successfully',
-      attendance: {
-        id: attendance.id,
-        student: attendance.student,
-        course: attendance.course,
-        date: attendance.date.toISOString(),
-        status: attendance.status,
-        scannedAt: attendance.scannedAt.toISOString()
-      }
+      attendanceId: attendance.id,
+      studentName: `${student.firstName} ${student.lastName}`
     })
   } catch (error) {
     console.error('Error marking attendance:', error)
     return NextResponse.json(
-      { error: 'Internal server error' },
+      { success: false, code: 'SERVER_ERROR', message: 'Internal server error' },
       { status: 500 }
     )
   }

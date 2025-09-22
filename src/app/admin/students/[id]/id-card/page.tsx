@@ -2,7 +2,7 @@
 
 import { useAuth } from '@/contexts/AuthContext'
 import { useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, use } from 'react'
 
 interface StudentData {
   id: string
@@ -18,7 +18,8 @@ interface StudentData {
   }>
 }
 
-export default function StudentIdCardPage({ params }: { params: { id: string } }) {
+export default function StudentIdCardPage({ params }: { params: Promise<{ id: string }> }) {
+  const resolvedParams = use(params)
   const { user, loading } = useAuth()
   const router = useRouter()
   const [student, setStudent] = useState<StudentData | null>(null)
@@ -35,12 +36,12 @@ export default function StudentIdCardPage({ params }: { params: { id: string } }
     if (user && user.role === 'ADMIN') {
       fetchStudentData()
     }
-  }, [user, params.id])
+  }, [user, resolvedParams.id])
 
   const fetchStudentData = async () => {
     try {
       const token = localStorage.getItem('token')
-      const response = await fetch(`/api/admin/students/${params.id}/id-card`, {
+      const response = await fetch(`/api/admin/students/${resolvedParams.id}/id-card`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }

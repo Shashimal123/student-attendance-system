@@ -2,7 +2,7 @@
 
 import { useAuth } from '@/contexts/AuthContext'
 import { useRouter } from 'next/navigation'
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { Html5QrcodeScanner } from 'html5-qrcode'
 
 interface Student {
@@ -36,36 +36,10 @@ export default function AttendanceScannerPage() {
   const [scanning, setScanning] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
   const [showPaymentModal, setShowPaymentModal] = useState(false)
-  const [paymentStatus, setPaymentStatus] = useState<'PAID' | 'UNPAID' | 'CHECKING'>('CHECKING')
   const scannerRef = useRef<Html5QrcodeScanner | null>(null)
   const scannerContainerRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (!loading && (!user || user.role !== 'ADMIN')) {
-      router.push('/login')
-    }
-  }, [user, loading, router])
-
-  useEffect(() => {
-    if (user && user.role === 'ADMIN') {
-      fetchCourses()
-    }
-  }, [user, fetchCourses])
-
-  useEffect(() => {
-    if (selectedCourse && scannerContainerRef.current && !scannerRef.current) {
-      initializeScanner()
-    }
-
-    return () => {
-      if (scannerRef.current) {
-        scannerRef.current.clear()
-        scannerRef.current = null
-      }
-    }
-  }, [selectedCourse])
-
-  const fetchCourses = async () => {
+  const fetchCourses = useCallback(async () => {
     try {
       const token = localStorage.getItem('token')
       const response = await fetch('/api/admin/courses', {
@@ -84,57 +58,21 @@ export default function AttendanceScannerPage() {
     } catch (error) {
       console.error('Error fetching courses:', error)
     }
-  }
+  }, [])
 
-  const initializeScanner = () => {
-    if (scannerContainerRef.current) {
-      scannerRef.current = new Html5QrcodeScanner(
-        "qr-reader",
-        { 
-          fps: 10, 
-          qrbox: { width: 250, height: 250 },
-          aspectRatio: 1.0
-        },
-        false
-      )
-
-      scannerRef.current.render(onScanSuccess, onScanFailure)
-    }
-  }
-
-  const onScanSuccess = async (decodedText: string) => {
-    if (!scanning) {
-      setScanning(true)
-      setScanResult(decodedText)
-      
-      try {
-        // Extract student ID from QR code
-        const qrData = decodedText
-        const studentId = qrData.split('-')[0] // Assuming format: STU123456-abc123
-        
-        if (studentId && selectedCourse) {
-          await markAttendance(studentId, selectedCourse)
-        }
-      } catch (error) {
-        console.error('Error processing scan:', error)
-        setMessage({ type: 'error', text: 'Error processing QR code' })
-      } finally {
-        setScanning(false)
-      }
-    }
-  }
-
-  const onScanFailure = (error: unknown) => {
-    // Handle scan failure silently
-    console.warn('QR scan failed:', error)
-  }
-
-  const markAttendance = async (studentId: string, courseId: string) => {
+  const markAttendance = useCallback(async (studentId: string, courseId: string) => {
     try {
       const token = localStorage.getItem('token')
       
-      // First check payment status
-      const paymentResponse = await fetch(`/api/admin/attendance/check-payment?studentId=${studentId}&courseId=${courseId}`, {
+      // Find the course to get its code
+      const course = courses.find(c => c.id === courseId)
+      if (!course) {
+        setMessage({ type: 'error', text: 'Course not found' })
+        return
+      }
+      
+      // First check payment status using course code
+      const paymentResponse = await fetch(`/api/admin/attendance/check-payment?studentId=${studentId}&courseId=${course.code}`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -143,26 +81,31 @@ export default function AttendanceScannerPage() {
 
       const paymentData = await paymentResponse.json()
       
+      console.log('Payment check response:', paymentData)
+      
       if (!paymentData.success) {
         setMessage({ type: 'error', text: paymentData.error || 'Error checking payment status' })
         return
       }
 
       // Mark attendance
-      const attendanceResponse = await fetch('/api/attendance/mark', {
+      const attendanceResponse = await fetch('/api/admin/attendance/mark', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          studentId: paymentData.student.id,
+          studentId: studentId, // Use the studentId string, not database ID
           courseId,
-          status: 'PRESENT'
+          status: 'PRESENT',
+          source: 'scanner'
         })
       })
 
       const attendanceData = await attendanceResponse.json()
+      
+      console.log('Attendance mark response:', attendanceData)
       
       if (attendanceData.success) {
         setScannedStudent(paymentData.student)
@@ -189,11 +132,83 @@ export default function AttendanceScannerPage() {
       console.error('Error marking attendance:', error)
       setMessage({ type: 'error', text: 'Error marking attendance' })
     }
+  }, [courses])
+
+  const onScanSuccess = useCallback(async (decodedText: string) => {
+    if (!scanning) {
+      setScanning(true)
+      
+      try {
+        // Extract student ID from QR code
+        const qrData = decodedText
+        const studentId = qrData.split('-')[0] // Assuming format: STU123456-abc123
+        
+        console.log('QR Code scanned:', qrData)
+        console.log('Extracted student ID:', studentId)
+        console.log('Selected course ID:', selectedCourse)
+        
+        if (studentId && selectedCourse) {
+          await markAttendance(studentId, selectedCourse)
+        } else {
+          setMessage({ type: 'error', text: 'Missing student ID or course selection' })
+        }
+      } catch (error) {
+        console.error('Error processing scan:', error)
+        setMessage({ type: 'error', text: 'Error processing QR code' })
+      } finally {
+        setScanning(false)
+      }
+    }
+  }, [scanning, selectedCourse, markAttendance])
+
+  const onScanFailure = (error: unknown) => {
+    // Handle scan failure silently
+    console.warn('QR scan failed:', error)
   }
+
+  const initializeScanner = useCallback(() => {
+    if (scannerContainerRef.current) {
+      scannerRef.current = new Html5QrcodeScanner(
+        "qr-reader",
+        { 
+          fps: 10, 
+          qrbox: { width: 250, height: 250 },
+          aspectRatio: 1.0
+        },
+        false
+      )
+
+      scannerRef.current.render(onScanSuccess, onScanFailure)
+    }
+  }, [onScanSuccess])
+
+  useEffect(() => {
+    if (!loading && (!user || user.role !== 'ADMIN')) {
+      router.push('/login')
+    }
+  }, [user, loading, router])
+
+  useEffect(() => {
+    if (user && user.role === 'ADMIN') {
+      fetchCourses()
+    }
+  }, [user, fetchCourses])
+
+  useEffect(() => {
+    if (selectedCourse && scannerContainerRef.current && !scannerRef.current) {
+      initializeScanner()
+    }
+
+    return () => {
+      if (scannerRef.current) {
+        scannerRef.current.clear()
+        scannerRef.current = null
+      }
+    }
+  }, [selectedCourse, initializeScanner])
 
   const closePaymentModal = () => {
     setShowPaymentModal(false)
-    setPaymentStatus('CHECKING')
   }
 
   if (loading) {

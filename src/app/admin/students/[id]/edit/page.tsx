@@ -2,7 +2,7 @@
 
 import { useAuth } from '@/contexts/AuthContext'
 import { useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, use } from 'react'
 
 interface Student {
   id: string
@@ -32,7 +32,8 @@ interface Course {
   code: string
 }
 
-export default function EditStudentPage({ params }: { params: { id: string } }) {
+export default function EditStudentPage({ params }: { params: Promise<{ id: string }> }) {
+  const resolvedParams = use(params)
   const { user, loading } = useAuth()
   const router = useRouter()
   const [student, setStudent] = useState<Student | null>(null)
@@ -67,7 +68,7 @@ export default function EditStudentPage({ params }: { params: { id: string } }) 
   const fetchStudent = async () => {
     try {
       const token = localStorage.getItem('token')
-      const response = await fetch(`/api/admin/students/${params.id}`, {
+      const response = await fetch(`/api/admin/students/${resolvedParams.id}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -116,7 +117,7 @@ export default function EditStudentPage({ params }: { params: { id: string } }) 
   const handleSave = async () => {
     try {
       const token = localStorage.getItem('token')
-      const response = await fetch(`/api/admin/students/${params.id}`, {
+      const response = await fetch(`/api/admin/students/${resolvedParams.id}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',

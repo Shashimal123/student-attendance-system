@@ -52,7 +52,7 @@ async function handler(req: NextRequest) {
     }
 
     // Check if student is enrolled in the course
-    const enrollment = student.enrollments.find(e => e.course.code === courseId)
+    const enrollment = student.enrollments.find(e => e.courseId === course.id)
     if (!enrollment) {
       return NextResponse.json(
         { error: 'Student is not enrolled in this course' },

@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withAdminAuth } from '@/lib/middleware'
 import { prisma } from '@/lib/prisma'
 
-async function handler(req: NextRequest, { params }: { params: { id: string } }) {
+async function handler(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (req.method === 'GET') {
     try {
-      const studentId = params.id
+      const resolvedParams = await params
+      const studentId = resolvedParams.id
 
       const student = await prisma.student.findUnique({
         where: { id: studentId },
@@ -65,7 +66,7 @@ async function handler(req: NextRequest, { params }: { params: { id: string } })
     }
   } else if (req.method === 'PATCH') {
     try {
-      const studentId = params.id
+      const studentId = resolvedParams.id
       const updateData = await req.json()
 
       // Update student profile
@@ -114,7 +115,7 @@ async function handler(req: NextRequest, { params }: { params: { id: string } })
     }
   } else if (req.method === 'DELETE') {
     try {
-      const studentId = params.id
+      const studentId = resolvedParams.id
 
       // Get student to find userId
       const student = await prisma.student.findUnique({

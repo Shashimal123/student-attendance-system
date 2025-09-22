@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withAdminAuth } from '@/lib/middleware'
 import { prisma } from '@/lib/prisma'
 
-async function handler(req: NextRequest, { params }: { params: { id: string } }) {
+async function handler(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (req.method !== 'GET') {
     return NextResponse.json({ error: 'Method not allowed' }, { status: 405 })
   }
 
   try {
-    const teacherId = params.id
+    const resolvedParams = await params
+    const teacherId = resolvedParams.id
 
     const teacher = await prisma.teacher.findUnique({
       where: { id: teacherId },

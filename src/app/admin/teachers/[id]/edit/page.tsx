@@ -2,7 +2,7 @@
 
 import { useAuth } from '@/contexts/AuthContext'
 import { useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, use } from 'react'
 
 interface Teacher {
   id: string
@@ -13,7 +13,8 @@ interface Teacher {
   isActive: boolean
 }
 
-export default function EditTeacherPage({ params }: { params: { id: string } }) {
+export default function EditTeacherPage({ params }: { params: Promise<{ id: string }> }) {
+  const resolvedParams = use(params)
   const { user, loading } = useAuth()
   const router = useRouter()
   const [teacher, setTeacher] = useState<Teacher | null>(null)
@@ -35,7 +36,7 @@ export default function EditTeacherPage({ params }: { params: { id: string } }) 
   const fetchTeacher = async () => {
     try {
       const token = localStorage.getItem('token')
-      const response = await fetch(`/api/admin/teachers/${params.id}`, {
+      const response = await fetch(`/api/admin/teachers/${resolvedParams.id}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }

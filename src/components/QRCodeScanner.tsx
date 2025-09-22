@@ -1,160 +1,330 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import QrScanner from 'qr-scanner'
 
-export default function QRScannerWithLibrary() {
-  const [status, setStatus] = useState('Initializing...')
-  const [error, setError] = useState('')
-  const [scannedData, setScannedData] = useState('')
-  const [isScanning, setIsScanning] = useState(false)
-  const [attendance, setAttendance] = useState<string[]>([]) 
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const qrScannerRef = useRef<QrScanner | null>(null)
+interface Props {
+  courseId?: string | null // pass selected course id or code from parent
+  markedBy?: string | null // optional teacher id (from session)
+  className?: string
+}
 
-  // ✅ Valid QR codes (simulate student IDs)
-  const validQRCodes = [
-    'STU001-test123',
-    'STU002-test456',
-    'STU003-test789'
-  ]
+type CourseItem = { id: string | number; code?: string; name?: string }
+
+export default function QRScannerWithAPI({ courseId: initialCourseId = null, markedBy = null, className = '' }: Props) {
+  const [status, setStatus] = useState('Idle')
+  const [error, setError] = useState<string | null>(null)
+  const [isScanning, setIsScanning] = useState(false)
+  const [attendance, setAttendance] = useState<string[]>([])
+  const [debugLastScanned, setDebugLastScanned] = useState<string | null>(null)
+  const [courseId, setCourseId] = useState<string | null>(initialCourseId)
+  const [courses, setCourses] = useState<CourseItem[]>([])
+  const [loadingCourses, setLoadingCourses] = useState(false)
+
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const qrScannerRef = useRef<QrScanner | null>(null)
+  const cooldownRef = useRef(false)
+  const resumeTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
     return () => {
-      if (qrScannerRef.current) {
-        qrScannerRef.current.stop()
-        qrScannerRef.current.destroy()
+      try {
+        qrScannerRef.current?.stop()
+        qrScannerRef.current?.destroy()
+      } catch (e) {
+        console.warn('cleanup scanner', e)
+      }
+      if (resumeTimerRef.current) {
+        clearTimeout(resumeTimerRef.current)
       }
     }
   }, [])
 
-  const startScanning = async () => {
-    try {
-      setStatus('Starting QR scanner...')
-      setError('')
-
-      if (!videoRef.current) {
-        throw new Error('Video element not found')
-      }
-
-      const qrScanner = new QrScanner(
-        videoRef.current,
-        (result) => handleQRCode(result.data),
-        {
-          highlightScanRegion: true,
-          highlightCodeOutline: true,
-          preferredCamera: 'user',
+  // fetch courses if endpoint exists; non-blocking and safe fallback
+  useEffect(() => {
+    let mounted = true
+    const fetchCourses = async () => {
+      setLoadingCourses(true)
+      try {
+        const res = await fetch('/api/courses', { method: 'GET', credentials: 'include' })
+        if (!mounted) return
+        if (!res.ok) {
+          setLoadingCourses(false)
+          return
         }
-      )
+        const json = await res.json().catch(() => null)
+        if (!json) {
+          setLoadingCourses(false)
+          return
+        }
+        // expect array of { id, code, name } or similar
+        if (Array.isArray(json)) {
+          const mapped = json.map((c: any) => ({
+            id: c.id ?? c.courseId ?? c.code ?? String(c).slice(0, 8),
+            code: c.code ?? c.courseCode ?? undefined,
+            name: c.name ?? c.title ?? undefined
+          }))
+          setCourses(mapped)
+          // if no initial course and one course exists, default to first
+          if (!initialCourseId && mapped.length > 0 && !courseId) {
+            const idOrCode = mapped[0].code ?? String(mapped[0].id)
+            setCourseId(String(idOrCode))
+          }
+        }
+      } catch (e) {
+        // ignore errors; leave courses empty so manual input remains available
+        console.warn('Could not fetch courses (ignored)', e)
+      } finally {
+        if (mounted) setLoadingCourses(false)
+      }
+    }
 
-      qrScannerRef.current = qrScanner
-      await qrScanner.start()
+    fetchCourses()
+    return () => {
+      mounted = false
+    }
+    // intentionally only run on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-      setIsScanning(true)
-      setStatus('Camera ready - scanning...')
-    } catch (err: unknown) {
-      console.error('QR Scanner error:', err)
-      setError(err instanceof Error ? `${err.name}: ${err.message}` : 'Unknown error occurred')
-      setStatus('QR Scanner failed to start')
+  // Helper: parse the scanned payload into a studentId
+  const parseStudentId = (raw: string): string | null => {
+    if (!raw) return null
+    setDebugLastScanned(raw)
+    raw = raw.trim()
+
+    // If JSON with studentId
+    if (raw.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(raw)
+        if (parsed?.studentId && typeof parsed.studentId === 'string') return parsed.studentId
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    // If URL-like, try last path segment
+    try {
+      if (raw.startsWith('http')) {
+        const u = new URL(raw)
+        const seg = u.pathname.split('/').filter(Boolean).pop()
+        if (seg) raw = seg
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    // If contains '-' (e.g. STU001-test123), take prefix before first '-'
+    if (raw.includes('-')) return raw.split('-')[0]
+
+    // If the token looks like STUxxx, accept as-is
+    if (/^STU\d+/i.test(raw)) return raw
+
+    // fallback: return raw if short-ish
+    if (raw.length > 0 && raw.length < 50) return raw
+
+    return null
+  }
+
+  // UI helper functions
+  const showError = (msg: string) => {
+    setError(msg)
+    setStatus('Error: ' + msg)
+  }
+  const showSuccess = (msg: string) => {
+    setError(null)
+    setStatus(msg)
+  }
+
+  // Call attendance API
+  const markAttendance = async (studentId: string) => {
+    if (!courseId) {
+      showError('Please select a course before scanning.')
+      return { ok: false, msg: 'No course selected' }
+    }
+
+    const payload = { studentId, courseId, markedBy }
+
+    try {
+      const res = await fetch('/api/attendance/mark', {
+        method: 'POST',
+        credentials: 'include', // keep if you rely on cookies/sessions
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      const json = await res.json().catch(() => ({}))
+      if (!res.ok || json?.success === false) {
+        const message = json?.message || `Server returned ${res.status}`
+        return { ok: false, msg: message, code: json?.code ?? null }
+      }
+      return { ok: true, msg: json.message || 'Attendance marked', data: json }
+    } catch (err) {
+      console.error('markAttendance network error', err)
+      return { ok: false, msg: 'Network error while marking attendance' }
     }
   }
 
-  const handleQRCode = (data: string) => {
-    setScannedData(data)
-
-    if (validQRCodes.includes(data)) {
-      if (!attendance.includes(data)) {
-        setAttendance((prev) => [...prev, data])
-        setStatus(`✅ Attendance marked for ${data}`)
-        setError('')
-      } else {
-        setStatus(`⚠️ Already scanned: ${data}`)
-      }
-    } else {
-      setError(`❌ Invalid QR Code: ${data}`)
-      setStatus('Error: Invalid QR Code')
+  // scanner callback
+  const onDetected = async (raw: string) => {
+    // debounce duplicates
+    if (cooldownRef.current) {
+      console.log('ignoring duplicate during cooldown', raw)
+      return
     }
+    cooldownRef.current = true
 
-    // Pause scanner briefly
-    if (qrScannerRef.current) {
-      qrScannerRef.current.pause()
+    const studentId = parseStudentId(raw)
+    if (!studentId) {
+      showError('Invalid QR format. Scanned: ' + raw.slice(0, 80))
+    } else {
+      setDebugLastScanned(studentId)
+      setStatus('Checking ' + studentId + '...')
+      // Pause scanner to avoid duplicate network calls, keep video alive
+      try { qrScannerRef.current?.pause() } catch (e) { console.warn('pause failed', e) }
       setIsScanning(false)
 
-      // Resume after 4s
-      setTimeout(() => {
+      const result = await markAttendance(studentId)
+      if (result.ok) {
+        showSuccess(`✅ Attendance marked for ${studentId}`)
+        // add to attendance list (prevent duplicates)
+        setAttendance(prev => prev.includes(studentId) ? prev : [...prev, studentId])
+      } else {
+        // show server-provided message if available
+        showError(`❌ ${result.msg}`)
+      }
+    }
+
+    // resume after cooldown (3s)
+    if (resumeTimerRef.current) clearTimeout(resumeTimerRef.current)
+    resumeTimerRef.current = window.setTimeout(async () => {
+      try {
         qrScannerRef.current?.resume()
         setIsScanning(true)
         setStatus('Camera ready - scanning...')
-      }, 4000)
+      } catch (err) {
+        console.warn('resume failed, trying start()', err)
+        try {
+          await qrScannerRef.current?.start()
+          setIsScanning(true)
+          setStatus('Camera ready - scanning...')
+        } catch (e) {
+          showError('Unable to resume scanner')
+        }
+      } finally {
+        cooldownRef.current = false
+      }
+    }, 3000)
+  }
+
+  const startScanner = async () => {
+    setError(null)
+    setStatus('Starting scanner...')
+    if (!videoRef.current) {
+      showError('Video element not found')
+      return
+    }
+
+    // create or reuse
+    if (!qrScannerRef.current) {
+      qrScannerRef.current = new QrScanner(
+        videoRef.current,
+        (result) => {
+          console.log('qr detected raw:', result?.data)
+          onDetected(String(result?.data))
+        },
+        { highlightScanRegion: true, highlightCodeOutline: true, preferredCamera: 'user' }
+      )
+    }
+
+    try {
+      await qrScannerRef.current.start()
+      setIsScanning(true)
+      setStatus('Camera ready - scanning...')
+    } catch (err) {
+      console.error('start scanner error', err)
+      showError('Failed to start camera. Check permissions and HTTPS.')
     }
   }
 
-  const stopScanning = () => {
-    if (qrScannerRef.current) {
-      qrScannerRef.current.stop()
-    }
+  const stopScanner = () => {
+    try {
+      qrScannerRef.current?.stop()
+    } catch (e) { console.warn('stop error', e) }
     setIsScanning(false)
     setStatus('Scanner stopped')
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
-      <div className="max-w-3xl mx-auto">
-        <h1 className="text-3xl font-bold mb-6">QR Attendance System</h1>
+    <div className={className}>
+      <div className="bg-white p-6 rounded shadow-md">
+        <h3 className="font-semibold text-lg mb-2">QR Code Scanner</h3>
 
-        {/* Status */}
-        <div
-          className={`p-4 rounded-lg mb-6 shadow-md ${
-            status.includes('Error') || error
-              ? 'bg-red-100 text-red-700 border border-red-300'
-              : status.includes('Attendance')
-              ? 'bg-green-100 text-green-700 border border-green-300'
-              : 'bg-blue-100 text-blue-700 border border-blue-300'
-          }`}
-        >
-          {status}
-        </div>
+        {/* Course selection - dropdown if courses available, otherwise input */}
+        <div className="mb-3">
+          <label className="block text-sm text-gray-600 mb-1">Selected Course</label>
 
-        {/* Controls */}
-        <div className="flex space-x-4 mb-6">
-          <button
-            onClick={startScanning}
-            disabled={isScanning}
-            className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400"
-          >
-            {isScanning ? 'Scanning...' : 'Start Scanner'}
-          </button>
-          <button
-            onClick={stopScanning}
-            disabled={!isScanning}
-            className="bg-red-600 text-white px-6 py-3 rounded-lg hover:bg-red-700 disabled:bg-gray-400"
-          >
-            Stop Scanner
-          </button>
-        </div>
+          {loadingCourses ? (
+            <div className="px-3 py-2 border rounded bg-gray-50 text-sm text-gray-500">Loading courses...</div>
+          ) : courses.length > 0 ? (
+            <select
+              value={courseId ?? ''}
+              onChange={(e) => setCourseId(e.target.value || null)}
+              className="w-full border px-3 py-2 rounded"
+              disabled={!!initialCourseId}
+            >
+              <option value="">{initialCourseId ? initialCourseId : 'Select a course'}</option>
+              {courses.map((c) => {
+                const label = c.name ? `${c.name} (${c.code ?? c.id})` : `${c.code ?? c.id}`
+                const value = c.code ?? String(c.id)
+                return (
+                  <option key={String(c.id)} value={value}>
+                    {label}
+                  </option>
+                )
+              })}
+            </select>
+          ) : (
+            <input
+              value={courseId ?? ''}
+              onChange={(e) => setCourseId(e.target.value || null)}
+              placeholder="Enter course id or code (e.g. MATH101)"
+              className="w-full border px-3 py-2 rounded"
+              readOnly={!!initialCourseId}
+            />
+          )}
 
-        {/* Camera Preview */}
-        <div className="relative mb-6">
-          <video ref={videoRef} className="w-full h-72 bg-black rounded-lg" />
-          {isScanning && (
-            <div className="absolute top-4 right-4">
-              <span className="px-3 py-1 bg-green-600 text-white text-sm rounded-full animate-pulse">
-                Scanning...
-              </span>
-            </div>
+          {!initialCourseId && !loadingCourses && courses.length === 0 && (
+            <small className="text-xs text-gray-500">No courses found — enter course code or DB id manually</small>
           )}
         </div>
 
-        {/* Attendance List */}
+        {/* Status / messages */}
+        {error && <div className="mb-3 p-3 bg-red-50 text-red-700 border border-red-200 rounded">{error}</div>}
+        <div className="mb-3 p-2 bg-gray-50 rounded text-sm">{status}</div>
+
+        {/* Controls */}
+        <div className="flex gap-2 mb-4">
+          <button onClick={startScanner} disabled={isScanning} className="bg-blue-600 text-white px-4 py-2 rounded">Start Scanner</button>
+          <button onClick={stopScanner} disabled={!isScanning} className="bg-red-600 text-white px-4 py-2 rounded">Stop Scanner</button>
+        </div>
+
+        {/* Video */}
+        <div className="bg-black rounded overflow-hidden mb-3" style={{ height: 360 }}>
+          <video ref={videoRef} className="w-full h-full object-cover" autoPlay playsInline muted />
+        </div>
+
+        {/* Debug last scanned */}
+        <div className="text-xs text-gray-500 mb-3">
+          <div>Last raw scanned: <strong>{debugLastScanned ?? '-'}</strong></div>
+          <div>Marked items: {attendance.length}</div>
+        </div>
+
+        {/* Attendance list */}
         {attendance.length > 0 && (
-          <div className="bg-white p-6 rounded-lg shadow-md">
-            <h2 className="text-xl font-semibold mb-4">Attendance List</h2>
-            <ul className="list-disc list-inside space-y-1">
-              {attendance.map((id, i) => (
-                <li key={i} className="text-green-700 font-medium">
-                  {id}
-                </li>
-              ))}
+          <div className="bg-green-50 border border-green-100 p-3 rounded">
+            <strong>Marked attendance:</strong>
+            <ul className="list-disc list-inside mt-2">
+              {attendance.map((s) => <li key={s} className="text-green-800">{s}</li>)}
             </ul>
           </div>
         )}
