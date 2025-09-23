@@ -16,6 +16,7 @@ export default function QRCodeDisplay({ studentId, studentName, className = '' }
   useEffect(() => {
     const generateQRCode = async () => {
       try {
+        // Use the studentId directly as it should be the qrCode value
         const url = await QRCode.toDataURL(studentId, {
           width: 300,
           margin: 2,

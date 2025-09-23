@@ -110,8 +110,8 @@ export default function QRScannerWithAPI({ courseId: initialCourseId = null, mar
     }
   }, [user, initialCourseId, courseId])
 
-  // Helper: parse the scanned payload into a studentId
-  const parseStudentId = (raw: string): string | null => {
+  // Helper: parse the scanned payload into a qrCode
+  const parseQRCode = (raw: string): string | null => {
     if (!raw) return null
     setDebugLastScanned(raw)
     raw = raw.trim()
@@ -137,14 +137,8 @@ export default function QRScannerWithAPI({ courseId: initialCourseId = null, mar
       // ignore
     }
 
-    // If contains '-' (e.g. STU001-test123), take prefix before first '-'
-    if (raw.includes('-')) return raw.split('-')[0]
-
-    // If the token looks like STUxxx, accept as-is
-    if (/^STU\d+/i.test(raw)) return raw
-
-    // fallback: return raw if short-ish
-    if (raw.length > 0 && raw.length < 50) return raw
+    // Return the raw QR code data as-is (it should be the qrCode field from database)
+    if (raw.length > 0 && raw.length < 100) return raw
 
     return null
   }
@@ -160,7 +154,7 @@ export default function QRScannerWithAPI({ courseId: initialCourseId = null, mar
   }
 
   // Call attendance API
-  const markAttendance = async (studentId: string) => {
+  const markAttendance = async (qrCode: string) => {
     if (!courseId) {
       showError('Please select a course before scanning.')
       return { ok: false, msg: 'No course selected' }
@@ -177,9 +171,23 @@ export default function QRScannerWithAPI({ courseId: initialCourseId = null, mar
       return { ok: false, msg: 'No authentication token' }
     }
 
-    const payload = { studentId, courseId, status: 'PRESENT', markedBy: markedBy || user.teacherId || user.adminId }
-
+    // First, find the student by qrCode to get the studentId
     try {
+      const studentRes = await fetch(`/api/students/by-id/${encodeURIComponent(qrCode)}`, {
+        method: 'GET',
+        headers: { 
+          'Authorization': `Bearer ${token}`
+        }
+      })
+      
+      const studentData = await studentRes.json()
+      if (!studentRes.ok || !studentData.success) {
+        return { ok: false, msg: 'Student not found' }
+      }
+
+      const studentId = studentData.student.id
+      const payload = { studentId, courseId, status: 'PRESENT', markedBy: markedBy || user.teacherId || user.adminId }
+
       const res = await fetch('/api/attendance/mark', {
         method: 'POST',
         headers: { 
@@ -209,21 +217,21 @@ export default function QRScannerWithAPI({ courseId: initialCourseId = null, mar
     }
     cooldownRef.current = true
 
-    const studentId = parseStudentId(raw)
-    if (!studentId) {
+    const qrCode = parseQRCode(raw)
+    if (!qrCode) {
       showError('Invalid QR format. Scanned: ' + raw.slice(0, 80))
     } else {
-      setDebugLastScanned(studentId)
-      setStatus('Checking ' + studentId + '...')
+      setDebugLastScanned(qrCode)
+      setStatus('Checking ' + qrCode + '...')
       // Pause scanner to avoid duplicate network calls, keep video alive
       try { qrScannerRef.current?.pause() } catch (e) { console.warn('pause failed', e) }
       setIsScanning(false)
 
-      const result = await markAttendance(studentId)
+      const result = await markAttendance(qrCode)
       if (result.ok) {
-        showSuccess(`✅ Attendance marked for ${studentId}`)
+        showSuccess(`✅ Attendance marked for ${qrCode}`)
         // add to attendance list (prevent duplicates)
-        setAttendance(prev => prev.includes(studentId) ? prev : [...prev, studentId])
+        setAttendance(prev => prev.includes(qrCode) ? prev : [...prev, qrCode])
       } else {
         // show server-provided message if available
         showError(`❌ ${result.msg}`)

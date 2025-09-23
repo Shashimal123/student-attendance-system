@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withTeacherAuth } from '@/lib/middleware'
 import { prisma } from '@/lib/prisma'
 
-async function handler(req: NextRequest, { params }: { params: { studentId: string } }) {
+async function handler(req: NextRequest, { params }: { params: Promise<{ studentId: string }> }) {
   try {
-    const { studentId } = params
+    const resolvedParams = await params
+    const { studentId } = resolvedParams
 
     console.log('Looking for student with ID:', studentId)
 

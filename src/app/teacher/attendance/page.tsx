@@ -92,11 +92,11 @@ export default function TeacherAttendancePage() {
     }
   }
 
-  const handleQRScan = async (studentId: string) => {
-    console.log('QR Code scanned:', studentId)
+  const handleQRScan = async (qrCode: string) => {
+    console.log('QR Code scanned:', qrCode)
     try {
       const token = localStorage.getItem('token')
-      const response = await fetch(`/api/students/by-id/${studentId}`, {
+      const response = await fetch(`/api/students/by-id/${encodeURIComponent(qrCode)}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -324,8 +324,6 @@ export default function TeacherAttendancePage() {
             <div className="bg-white/80 backdrop-blur-md rounded-2xl shadow-xl border border-white/20 p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">QR Code Scanner</h3>
               <QRCodeScanner
-                onScan={handleQRScan}
-                onError={(error) => setMessage({ type: 'error', text: error })}
                 className="mb-6"
               />
             </div>

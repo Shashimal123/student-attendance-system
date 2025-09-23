@@ -20,6 +20,9 @@ async function handler(req: NextRequest) {
       )
     }
 
+    // studentId here is actually the database ID from the student lookup
+    const studentDbId = studentId
+
     // Verify the course belongs to the teacher (unless admin)
     let course
     if (user.role !== 'ADMIN') {
@@ -55,14 +58,14 @@ async function handler(req: NextRequest) {
     // Check if student is enrolled in the course
     const enrollment = await prisma.courseEnrollment.findFirst({
       where: {
-        studentId,
+        studentId: studentDbId, // This is the database ID
         courseId,
         isActive: true
       }
     })
 
     if (!enrollment) {
-      console.log('Student not enrolled in course:', { studentId, courseId })
+      console.log('Student not enrolled in course:', { studentDbId, courseId })
       return NextResponse.json(
         { error: 'Student is not enrolled in this course' },
         { status: 400 }
@@ -76,7 +79,7 @@ async function handler(req: NextRequest) {
 
     const payment = await prisma.payment.findFirst({
       where: {
-        studentId,
+        studentId: studentDbId,
         courseId,
         month: currentMonth,
         year: currentYear
@@ -115,7 +118,7 @@ async function handler(req: NextRequest) {
 
     const existingAttendance = await prisma.attendance.findFirst({
       where: {
-        studentId,
+        studentId: studentDbId,
         courseId,
         date: {
           gte: today,
@@ -141,7 +144,7 @@ async function handler(req: NextRequest) {
       // Send attendance email to student (optional)
       try {
         const student = await prisma.student.findUnique({
-          where: { id: studentId },
+          where: { id: studentDbId },
           include: { user: true }
         })
         
@@ -168,7 +171,7 @@ async function handler(req: NextRequest) {
       // Create new attendance record
       const newAttendance = await prisma.attendance.create({
         data: {
-          studentId,
+          studentId: studentDbId,
           courseId,
           date: today,
           status,
@@ -178,12 +181,12 @@ async function handler(req: NextRequest) {
       })
 
       // Create notification for student
-      await createAttendanceMarkedNotification(studentId, course.name, status)
+      await createAttendanceMarkedNotification(studentDbId, course.name, status)
 
       // Send attendance email to student (optional)
       try {
         const student = await prisma.student.findUnique({
-          where: { id: studentId },
+          where: { id: studentDbId },
           include: { user: true }
         })
         

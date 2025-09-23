@@ -60,7 +60,7 @@ export default function AttendanceScannerPage() {
     }
   }, [])
 
-  const markAttendance = useCallback(async (studentId: string, courseId: string) => {
+  const markAttendance = useCallback(async (qrCode: string, courseId: string) => {
     try {
       const token = localStorage.getItem('token')
       
@@ -72,7 +72,7 @@ export default function AttendanceScannerPage() {
       }
       
       // First check payment status using course code
-      const paymentResponse = await fetch(`/api/admin/attendance/check-payment?studentId=${studentId}&courseId=${course.code}`, {
+      const paymentResponse = await fetch(`/api/admin/attendance/check-payment?studentId=${qrCode}&courseId=${course.code}`, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -88,7 +88,7 @@ export default function AttendanceScannerPage() {
         return
       }
 
-      // Mark attendance
+      // Mark attendance using the studentId from payment response
       const attendanceResponse = await fetch('/api/admin/attendance/mark', {
         method: 'POST',
         headers: {
@@ -96,10 +96,9 @@ export default function AttendanceScannerPage() {
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          studentId: studentId, // Use the studentId string, not database ID
+          studentId: paymentData.student.studentId, // Use the studentId from payment response
           courseId,
-          status: 'PRESENT',
-          source: 'scanner'
+          status: 'PRESENT'
         })
       })
 
@@ -110,15 +109,7 @@ export default function AttendanceScannerPage() {
       if (attendanceData.success) {
         setScannedStudent(paymentData.student)
         
-        // Show payment warning if applicable
-        if (attendanceData.paymentWarning) {
-          setMessage({ 
-            type: 'error', 
-            text: `Attendance marked but ${attendanceData.paymentWarning.message}` 
-          })
-        } else {
-          setMessage({ type: 'success', text: 'Attendance marked successfully!' })
-        }
+        setMessage({ type: 'success', text: 'Attendance marked successfully!' })
         
         // Auto-hide success message after 5 seconds
         setTimeout(() => {
@@ -126,7 +117,7 @@ export default function AttendanceScannerPage() {
           setScannedStudent(null)
         }, 5000)
       } else {
-        setMessage({ type: 'error', text: attendanceData.error || 'Failed to mark attendance' })
+        setMessage({ type: 'error', text: attendanceData.message || 'Failed to mark attendance' })
       }
     } catch (error) {
       console.error('Error marking attendance:', error)
@@ -139,18 +130,16 @@ export default function AttendanceScannerPage() {
       setScanning(true)
       
       try {
-        // Extract student ID from QR code
-        const qrData = decodedText
-        const studentId = qrData.split('-')[0] // Assuming format: STU123456-abc123
+        // The QR code contains the full qrCode value from database
+        const qrData = decodedText.trim()
         
         console.log('QR Code scanned:', qrData)
-        console.log('Extracted student ID:', studentId)
         console.log('Selected course ID:', selectedCourse)
         
-        if (studentId && selectedCourse) {
-          await markAttendance(studentId, selectedCourse)
+        if (qrData && selectedCourse) {
+          await markAttendance(qrData, selectedCourse)
         } else {
-          setMessage({ type: 'error', text: 'Missing student ID or course selection' })
+          setMessage({ type: 'error', text: 'Missing QR data or course selection' })
         }
       } catch (error) {
         console.error('Error processing scan:', error)

@@ -94,7 +94,7 @@ export default function StudentQRCodePage() {
           {/* QR Code Display */}
           <div>
             <QRCodeDisplay
-              studentId={studentData.studentId}
+              studentId={studentData.qrCode}
               studentName={`${studentData.firstName} ${studentData.lastName}`}
               className="h-fit"
             />

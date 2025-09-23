@@ -19,9 +19,9 @@ async function handler(req: NextRequest) {
       )
     }
 
-    // Find student by student ID
+    // Find student by qrCode (which is what the QR scanner provides)
     const student = await prisma.student.findFirst({
-      where: { studentId },
+      where: { qrCode: studentId },
       include: {
         enrollments: {
           where: { isActive: true },
