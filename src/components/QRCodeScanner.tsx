@@ -9,7 +9,7 @@ export default function QRScannerWithLibrary() {
   const [scannedData, setScannedData] = useState('')
   const [isScanning, setIsScanning] = useState(false)
   const [attendance, setAttendance] = useState<string[]>([]) 
-  const videoRef = useRef<HTMLVideoElement>(null)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
   const qrScannerRef = useRef<QrScanner | null>(null)
 
   // ✅ Valid QR codes (simulate student IDs)
@@ -30,6 +30,7 @@ export default function QRScannerWithLibrary() {
 
   const startScanning = async () => {
     try {
+      console.log("Start scanning..")
       setStatus('Starting QR scanner...')
       setError('')
 
@@ -62,30 +63,26 @@ export default function QRScannerWithLibrary() {
   const handleQRCode = (data: string) => {
     setScannedData(data)
 
+    console.log("QR Code detected: ", data)
+    if (data) {
+      setStatus(`✅ Attendance marked for ${data}`)
+      return
+    }
+
     if (validQRCodes.includes(data)) {
       if (!attendance.includes(data)) {
         setAttendance((prev) => [...prev, data])
+        console.log(`Attendance marked for ${data}`)
         setStatus(`✅ Attendance marked for ${data}`)
         setError('')
       } else {
+        console.log(`Already scanned: ${data}`)
         setStatus(`⚠️ Already scanned: ${data}`)
       }
     } else {
       setError(`❌ Invalid QR Code: ${data}`)
       setStatus('Error: Invalid QR Code')
-    }
-
-    // Pause scanner briefly
-    if (qrScannerRef.current) {
-      qrScannerRef.current.pause()
-      setIsScanning(false)
-
-      // Resume after 4s
-      setTimeout(() => {
-        qrScannerRef.current?.resume()
-        setIsScanning(true)
-        setStatus('Camera ready - scanning...')
-      }, 4000)
+      console.log("Invalid QR Code")
     }
   }
 
@@ -95,6 +92,7 @@ export default function QRScannerWithLibrary() {
     }
     setIsScanning(false)
     setStatus('Scanner stopped')
+    console.log("Scanning stopped")
   }
 
   return (
@@ -135,7 +133,7 @@ export default function QRScannerWithLibrary() {
 
         {/* Camera Preview */}
         <div className="relative mb-6">
-          <video ref={videoRef} className="w-full h-72 bg-black rounded-lg" />
+          <video ref={videoRef} className="w-full h-80 bg-black rounded-lg" />
           {isScanning && (
             <div className="absolute top-4 right-4">
               <span className="px-3 py-1 bg-green-600 text-white text-sm rounded-full animate-pulse">

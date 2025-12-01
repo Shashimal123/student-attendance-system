@@ -18,7 +18,14 @@ const eslintConfig = [
       "out/**",
       "build/**",
       "next-env.d.ts",
+      "scripts/**",
+      "server-https.js",
     ],
+  },
+  {
+    rules: {
+      "no-console": "off", // Allow console.log in development
+    },
   },
 ];
 

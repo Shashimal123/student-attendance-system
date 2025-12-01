@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer'
+import { logger } from './logger'
 
 interface EmailConfig {
   host: string
@@ -38,7 +39,14 @@ const createTransporter = () => {
 
 // Send email
 export async function sendEmail(emailData: EmailData): Promise<boolean> {
+  const emailLogger = logger.withContext('EmailService')
+  
   try {
+    emailLogger.info('Sending email', { 
+      to: emailData.to, 
+      subject: emailData.subject 
+    })
+    
     const transporter = createTransporter()
     
     await transporter.sendMail({
@@ -49,9 +57,13 @@ export async function sendEmail(emailData: EmailData): Promise<boolean> {
       html: emailData.html
     })
 
+    emailLogger.info('Email sent successfully', { to: emailData.to })
     return true
   } catch (error) {
-    console.error('Error sending email:', error)
+    emailLogger.error('Failed to send email', error, { 
+      to: emailData.to,
+      subject: emailData.subject 
+    })
     return false
   }
 }

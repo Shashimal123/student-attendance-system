@@ -1,38 +1,46 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from './auth'
+import { logger } from './logger'
+
+const middlewareLogger = logger.withContext('AuthMiddleware')
 
 export function withAuth(handler: Function, allowedRoles: string[] = []) {
   return async (req: NextRequest, ...args: any[]) => {
     try {
       const token = req.headers.get('authorization')?.replace('Bearer ', '')
-      console.log('Middleware - Token:', token ? 'Token exists' : 'No token')
       
       if (!token) {
-        console.log('Middleware - No token provided')
+        middlewareLogger.warn('No token provided', { path: req.url })
         return NextResponse.json({ error: 'No token provided' }, { status: 401 })
       }
 
       const user = verifyToken(token)
-      console.log('Middleware - Verified user:', user)
       
       if (!user) {
-        console.log('Middleware - Invalid token')
+        middlewareLogger.warn('Invalid token', { path: req.url })
         return NextResponse.json({ error: 'Invalid token' }, { status: 401 })
       }
 
       if (allowedRoles.length > 0 && !allowedRoles.includes(user.role)) {
-        console.log('Middleware - Insufficient permissions, user role:', user.role, 'allowed roles:', allowedRoles)
+        middlewareLogger.warn('Insufficient permissions', { 
+          path: req.url,
+          userRole: user.role, 
+          allowedRoles 
+        })
         return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
       }
 
-      console.log('Middleware - Authentication successful, user role:', user.role)
-      
+      middlewareLogger.debug('Authentication successful', { 
+        userRole: user.role,
+        path: req.url 
+      })
+
       // Add user to request object
       ;(req as any).user = user
       
       return handler(req, ...args)
     } catch (error) {
-      console.error('Middleware - Authentication failed:', error)
+      middlewareLogger.error('Authentication failed', error, { path: req.url })
       return NextResponse.json({ error: 'Authentication failed' }, { status: 401 })
     }
   }
