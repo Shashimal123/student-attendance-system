@@ -1,7 +1,7 @@
 'use client'
 
 import { useAuth } from '@/contexts/AuthContext'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 
@@ -17,10 +17,13 @@ interface AttendanceReport {
 export default function AdminReportsPage() {
   const { user, loading } = useAuth()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const initialDate = searchParams.get('date') || ''
+  const initialCourse = searchParams.get('courseId') || ''
   const [reports, setReports] = useState<AttendanceReport[]>([])
   const [loadingReports, setLoadingReports] = useState(true)
-  const [selectedDate, setSelectedDate] = useState('')
-  const [selectedCourse, setSelectedCourse] = useState('')
+  const [selectedDate, setSelectedDate] = useState(initialDate)
+  const [selectedCourse, setSelectedCourse] = useState(initialCourse)
   const [courses, setCourses] = useState<Array<{ id: string, name: string, code: string }>>([])
 
   useEffect(() => {

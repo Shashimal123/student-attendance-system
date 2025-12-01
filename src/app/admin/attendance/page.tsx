@@ -1,7 +1,7 @@
 'use client'
 
 import { useAuth } from '@/contexts/AuthContext'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 
@@ -24,10 +24,13 @@ interface AttendanceRecord {
 export default function AdminAttendancePage() {
   const { user, loading } = useAuth()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const initialDate = searchParams.get('date') || new Date().toISOString().split('T')[0]
+  const initialCourse = searchParams.get('courseId') || 'all'
   const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([])
   const [loadingRecords, setLoadingRecords] = useState(true)
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0])
-  const [selectedCourse, setSelectedCourse] = useState('all')
+  const [selectedDate, setSelectedDate] = useState(initialDate)
+  const [selectedCourse, setSelectedCourse] = useState(initialCourse)
   const [courses, setCourses] = useState<Array<{ id: string, name: string, code: string }>>([])
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
 

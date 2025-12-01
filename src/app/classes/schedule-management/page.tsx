@@ -323,6 +323,28 @@ export default function ScheduleManagementPage() {
                       >
                         Delete
                       </motion.button>
+                      <motion.button
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
+                        onClick={() => {
+                          const dateParam = new Date(schedule.date).toISOString().split('T')[0]
+                          router.push(`/admin/attendance?date=${dateParam}&courseId=${schedule.course.id}`)
+                        }}
+                        className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-green-700 transition-colors"
+                      >
+                        View Attendance
+                      </motion.button>
+                      <motion.button
+                        whileHover={{ scale: 1.05 }}
+                        whileTap={{ scale: 0.95 }}
+                        onClick={() => {
+                          const dateParam = new Date(schedule.date).toISOString().split('T')[0]
+                          router.push(`/admin/reports?date=${dateParam}&courseId=${schedule.course.id}`)
+                        }}
+                        className="bg-purple-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors"
+                      >
+                        View Report
+                      </motion.button>
                     </div>
                   </motion.div>
                 ))}
