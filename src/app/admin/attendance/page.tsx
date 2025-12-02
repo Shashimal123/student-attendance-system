@@ -69,10 +69,11 @@ export default function AdminAttendancePage() {
     try {
       setLoadingRecords(true)
       const token = localStorage.getItem('token')
-      const params = new URLSearchParams({
-        date: selectedDate,
-        ...(selectedCourse !== 'all' && { courseId: selectedCourse })
-      })
+      const params = new URLSearchParams()
+      params.append('date', selectedDate)
+      if (selectedCourse !== 'all') {
+        params.append('courseId', selectedCourse)
+      }
       
       const response = await fetch(`/api/admin/attendance?${params}`, {
         headers: {
@@ -95,10 +96,11 @@ export default function AdminAttendancePage() {
   const exportAttendance = async () => {
     try {
       const token = localStorage.getItem('token')
-      const params = new URLSearchParams({
-        date: selectedDate,
-        ...(selectedCourse !== 'all' && { courseId: selectedCourse })
-      })
+      const params = new URLSearchParams()
+      params.append('date', selectedDate)
+      if (selectedCourse !== 'all') {
+        params.append('courseId', selectedCourse)
+      }
       
       const response = await fetch(`/api/admin/attendance/export-excel?${params}`, {
         headers: {
