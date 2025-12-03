@@ -1,161 +1,180 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import QrScanner from 'qr-scanner'
 
-export default function QRScannerWithLibrary() {
-  const [status, setStatus] = useState('Initializing...')
-  const [error, setError] = useState('')
-  const [scannedData, setScannedData] = useState('')
+type QRHandler = (data: string) => void
+
+interface QRCodeScannerProps {
+  onResult?: QRHandler
+  onDecode?: QRHandler
+  onScan?: QRHandler
+  onError?: (error: string) => void
+  className?: string
+  autoStart?: boolean
+  preferredCamera?: 'user' | 'environment'
+}
+
+export default function QRCodeScanner({
+  onResult,
+  onDecode,
+  onScan,
+  onError,
+  className = '',
+  autoStart = true,
+  preferredCamera = 'environment'
+}: QRCodeScannerProps) {
+  const [status, setStatus] = useState('Point the camera at a QR code to begin')
+  const [errorMessage, setErrorMessage] = useState('')
+  const [lastScan, setLastScan] = useState('')
   const [isScanning, setIsScanning] = useState(false)
-  const [attendance, setAttendance] = useState<string[]>([]) 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const qrScannerRef = useRef<QrScanner | null>(null)
 
-  // ✅ Valid QR codes (simulate student IDs)
-  const validQRCodes = [
-    'STU001-test123',
-    'STU002-test456',
-    'STU003-test789'
-  ]
+  const emitResult = useCallback((data: string) => {
+    onResult?.(data)
+    onDecode?.(data)
+    onScan?.(data)
+  }, [onResult, onDecode, onScan])
 
-  useEffect(() => {
-    return () => {
-      if (qrScannerRef.current) {
-        qrScannerRef.current.stop()
-        qrScannerRef.current.destroy()
-      }
+  const handleScanResult = useCallback((data: string) => {
+    if (!data) {
+      return
     }
-  }, [])
 
-  const startScanning = async () => {
+    setLastScan(data)
+    setStatus('QR code detected')
+    setErrorMessage('')
+    emitResult(data)
+  }, [emitResult])
+
+  const startScanning = useCallback(async () => {
     try {
-      console.log("Start scanning..")
-      setStatus('Starting QR scanner...')
-      setError('')
-
       if (!videoRef.current) {
         throw new Error('Video element not found')
       }
 
-      const qrScanner = new QrScanner(
+      setStatus('Starting scanner...')
+      setErrorMessage('')
+
+      if (qrScannerRef.current) {
+        await qrScannerRef.current.start()
+        setIsScanning(true)
+        setStatus('Scanner running')
+        return
+      }
+
+      const scanner = new QrScanner(
         videoRef.current,
-        (result) => handleQRCode(result.data),
+        (result) => {
+          const text = typeof result === 'string' ? result : result?.data
+          if (text) {
+            handleScanResult(text)
+          }
+        },
         {
-          highlightScanRegion: true,
           highlightCodeOutline: true,
-          preferredCamera: 'user',
+          highlightScanRegion: true,
+          preferredCamera
         }
       )
 
-      qrScannerRef.current = qrScanner
-      await qrScanner.start()
-
+      qrScannerRef.current = scanner
+      await scanner.start()
       setIsScanning(true)
-      setStatus('Camera ready - scanning...')
-    } catch (err: unknown) {
-      console.error('QR Scanner error:', err)
-      setError(err instanceof Error ? `${err.name}: ${err.message}` : 'Unknown error occurred')
-      setStatus('QR Scanner failed to start')
+      setStatus('Scanner running')
+    } catch (error) {
+      console.error('QR Scanner error:', error)
+      const message = error instanceof Error ? error.message : 'Unknown scanner error'
+      setErrorMessage(message)
+      setStatus('Unable to start scanner')
+      onError?.(message)
     }
-  }
+  }, [handleScanResult, onError, preferredCamera])
 
-  const handleQRCode = (data: string) => {
-    setScannedData(data)
-
-    console.log("QR Code detected: ", data)
-    if (data) {
-      setStatus(`✅ Attendance marked for ${data}`)
+  const stopScanning = useCallback(async () => {
+    if (!qrScannerRef.current) {
       return
     }
 
-    if (validQRCodes.includes(data)) {
-      if (!attendance.includes(data)) {
-        setAttendance((prev) => [...prev, data])
-        console.log(`Attendance marked for ${data}`)
-        setStatus(`✅ Attendance marked for ${data}`)
-        setError('')
-      } else {
-        console.log(`Already scanned: ${data}`)
-        setStatus(`⚠️ Already scanned: ${data}`)
-      }
-    } else {
-      setError(`❌ Invalid QR Code: ${data}`)
-      setStatus('Error: Invalid QR Code')
-      console.log("Invalid QR Code")
-    }
-  }
-
-  const stopScanning = () => {
-    if (qrScannerRef.current) {
-      qrScannerRef.current.stop()
-    }
+    await qrScannerRef.current.stop()
     setIsScanning(false)
     setStatus('Scanner stopped')
-    console.log("Scanning stopped")
-  }
+  }, [])
+
+  useEffect(() => {
+    if (autoStart) {
+      startScanning()
+    }
+
+    return () => {
+      if (qrScannerRef.current) {
+        qrScannerRef.current.stop()
+        qrScannerRef.current.destroy()
+        qrScannerRef.current = null
+      }
+    }
+  }, [autoStart, startScanning])
+
+  const statusStyles = useMemo(() => {
+    if (errorMessage) {
+      return 'bg-red-50 text-red-700 border border-red-200'
+    }
+
+    if (lastScan) {
+      return 'bg-green-50 text-green-700 border border-green-200'
+    }
+
+    return 'bg-blue-50 text-blue-700 border border-blue-200'
+  }, [errorMessage, lastScan])
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
-      <div className="max-w-3xl mx-auto">
-        <h1 className="text-3xl font-bold mb-6">QR Attendance System</h1>
+    <div className={`space-y-4 ${className}`}>
+      <div className={`p-3 rounded-xl text-sm ${statusStyles}`}>
+        <p className="font-medium">{status}</p>
+        {lastScan && (
+          <p className="mt-1 text-xs text-green-700 break-all">
+            Last scan: {lastScan}
+          </p>
+        )}
+        {errorMessage && (
+          <p className="mt-1 text-xs text-red-600">
+            {errorMessage}
+          </p>
+        )}
+      </div>
 
-        {/* Status */}
-        <div
-          className={`p-4 rounded-lg mb-6 shadow-md ${
-            status.includes('Error') || error
-              ? 'bg-red-100 text-red-700 border border-red-300'
-              : status.includes('Attendance')
-              ? 'bg-green-100 text-green-700 border border-green-300'
-              : 'bg-blue-100 text-blue-700 border border-blue-300'
-          }`}
-        >
-          {status}
-        </div>
-
-        {/* Controls */}
-        <div className="flex space-x-4 mb-6">
-          <button
-            onClick={startScanning}
-            disabled={isScanning}
-            className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 disabled:bg-gray-400"
-          >
-            {isScanning ? 'Scanning...' : 'Start Scanner'}
-          </button>
-          <button
-            onClick={stopScanning}
-            disabled={!isScanning}
-            className="bg-red-600 text-white px-6 py-3 rounded-lg hover:bg-red-700 disabled:bg-gray-400"
-          >
-            Stop Scanner
-          </button>
-        </div>
-
-        {/* Camera Preview */}
-        <div className="relative mb-6">
-          <video ref={videoRef} className="w-full h-80 bg-black rounded-lg" />
-          {isScanning && (
-            <div className="absolute top-4 right-4">
-              <span className="px-3 py-1 bg-green-600 text-white text-sm rounded-full animate-pulse">
-                Scanning...
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* Attendance List */}
-        {attendance.length > 0 && (
-          <div className="bg-white p-6 rounded-lg shadow-md">
-            <h2 className="text-xl font-semibold mb-4">Attendance List</h2>
-            <ul className="list-disc list-inside space-y-1">
-              {attendance.map((id, i) => (
-                <li key={i} className="text-green-700 font-medium">
-                  {id}
-                </li>
-              ))}
-            </ul>
+      <div className="relative rounded-2xl overflow-hidden border border-purple-100 bg-black">
+        <video
+          ref={videoRef}
+          className="w-full aspect-square object-cover"
+          muted
+          playsInline
+        />
+        {isScanning && (
+          <div className="absolute top-4 right-4">
+            <span className="px-3 py-1 bg-green-500/90 text-white text-xs rounded-full animate-pulse">
+              Scanning…
+            </span>
           </div>
         )}
+      </div>
+
+      <div className="flex gap-3">
+        <button
+          onClick={startScanning}
+          className="flex-1 bg-purple-600 text-white py-2 px-4 rounded-lg font-semibold disabled:bg-gray-400 transition-colors"
+          disabled={isScanning}
+        >
+          {isScanning ? 'Scanner Active' : 'Start Scanner'}
+        </button>
+        <button
+          onClick={stopScanning}
+          className="flex-1 bg-gray-100 text-gray-900 py-2 px-4 rounded-lg font-semibold disabled:bg-gray-200 transition-colors"
+          disabled={!isScanning}
+        >
+          Stop
+        </button>
       </div>
     </div>
   )

@@ -134,6 +134,7 @@ model Course {
   payments    Payment[]
   schedules   ClassSchedule[]
   payouts     TeacherPayout[]
+  attendanceReports AttendanceReport[]
 
   @@map("courses")
 }
@@ -167,7 +168,27 @@ model Attendance {
   course    Course  @relation(fields: [courseId], references: [id], onDelete: Cascade)
 
   @@unique([studentId, courseId, date])
+  @@index([courseId])
+  @@index([studentId])
+  @@index([date])
   @@map("attendances")
+}
+
+model AttendanceReport {
+  id           String   @id @default(cuid())
+  courseId     String
+  date         DateTime
+  presentCount Int      @default(0)
+  lateCount    Int      @default(0)
+  absentCount  Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, date])
+  @@index([date])
+  @@map("attendance_reports")
 }
 
 model Payment {

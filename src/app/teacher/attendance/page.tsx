@@ -34,8 +34,9 @@ export default function TeacherAttendancePage() {
   const [attendanceStatus, setAttendanceStatus] = useState<'PRESENT' | 'LATE' | 'ABSENT'>('PRESENT')
   const [remarks, setRemarks] = useState('')
   const [isMarking, setIsMarking] = useState(false)
+  const [isAutoMarking, setIsAutoMarking] = useState(false)
+  const [currentScanValue, setCurrentScanValue] = useState<string | null>(null)
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
-  const [todayClasses, setTodayClasses] = useState<any[]>([])
 
   useEffect(() => {
     if (!loading && (!user || (user.role !== 'TEACHER' && user.role !== 'ADMIN'))) {
@@ -83,7 +84,6 @@ export default function TeacherAttendancePage() {
       
       const data = await response.json()
       if (data.success && data.classes.length > 0) {
-        setTodayClasses(data.classes)
         // Auto-select the first class of the day
         setSelectedCourse(data.classes[0].course.id)
       }
@@ -92,11 +92,26 @@ export default function TeacherAttendancePage() {
     }
   }
 
-  const handleQRScan = async (studentId: string) => {
-    console.log('QR Code scanned:', studentId)
+  const handleQRScan = async (rawValue: string) => {
+    const scannedValue = rawValue?.trim()
+    if (!scannedValue) {
+      return
+    }
+
+    console.log('QR Code scanned:', scannedValue)
+
+    if (!selectedCourse) {
+      setMessage({ type: 'error', text: 'Please select a course first' })
+      return
+    }
+
+    setCurrentScanValue(scannedValue)
+    setIsAutoMarking(true)
+    setMessage(null)
+
     try {
       const token = localStorage.getItem('token')
-      const response = await fetch(`/api/students/by-id/${studentId}`, {
+      const response = await fetch(`/api/students/by-id/${scannedValue}`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -106,62 +121,87 @@ export default function TeacherAttendancePage() {
       const data = await response.json()
       console.log('Student lookup response:', data)
       
-      if (data.success) {
-        const student = data.student
-
-        if (!selectedCourse) {
-          setMessage({ type: 'error', text: 'Please select a course first' })
-          return
-        }
-
-        // Check payment status using the new API
-        const paymentResponse = await fetch('/api/attendance/check-payment', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`
-          },
-          body: JSON.stringify({
-            studentId: student.studentId,
-            courseId: selectedCourse
-          })
-        })
-
-        const paymentData = await paymentResponse.json()
-        
-        if (!paymentData.success) {
-          setMessage({ type: 'error', text: 'Error checking payment status' })
-          return
-        }
-
-        // Check if attendance is allowed based on payment status
-        if (!paymentData.canAttend) {
-          setMessage({ 
-            type: 'error', 
-            text: `🚫 Attendance Blocked: ${paymentData.message}` 
-          })
-          return
-        }
-
-        // Show payment warning if in grace period
-        if (paymentData.paymentStatus === 'GRACE_PERIOD') {
-          setMessage({ 
-            type: 'error', 
-            text: `⚠️ Payment Pending: ${paymentData.message}` 
-          })
-        } else {
-          setMessage(null)
-        }
-
-        setScannedStudent(student)
-      } else {
+      if (!data.success) {
         setMessage({ type: 'error', text: data.error || 'Student not found' })
         setScannedStudent(null)
+        return
+      }
+
+      const student = data.student
+
+      // Check payment status using the existing API
+      const paymentResponse = await fetch('/api/attendance/check-payment', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          studentId: student.studentId,
+          courseId: selectedCourse
+        })
+      })
+
+      const paymentData = await paymentResponse.json()
+      
+      if (!paymentData.success) {
+        setMessage({ type: 'error', text: 'Error checking payment status' })
+        return
+      }
+
+      if (!paymentData.canAttend) {
+        setMessage({ 
+          type: 'error', 
+          text: `🚫 Attendance Blocked: ${paymentData.message}` 
+        })
+        return
+      }
+
+      if (paymentData.paymentStatus === 'GRACE_PERIOD') {
+        setMessage({ 
+          type: 'error', 
+          text: `⚠️ Payment Pending: ${paymentData.message}` 
+        })
+      } else {
+        setMessage(null)
+      }
+
+      setScannedStudent(student)
+
+      // Optimistically mark attendance via API
+      const autoMarkResponse = await fetch('/api/attendance/mark', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          studentId: student.id,
+          courseId: selectedCourse,
+          status: 'PRESENT',
+          remarks: 'Marked via QR scan'
+        })
+      })
+
+      const autoMarkData = await autoMarkResponse.json()
+      if (autoMarkData.success) {
+        setMessage({
+          type: 'success',
+          text: autoMarkData.alreadyMarked
+            ? 'Attendance was already marked for this student today.'
+            : 'Attendance marked automatically!'
+        })
+        setAttendanceStatus('PRESENT')
+        setRemarks('')
+      } else {
+        setMessage({ type: 'error', text: autoMarkData.error || 'Failed to mark attendance automatically' })
       }
     } catch (error) {
-      console.error('Error fetching student:', error)
-      setMessage({ type: 'error', text: 'Error fetching student data' })
+      console.error('Error processing QR scan:', error)
+      setMessage({ type: 'error', text: 'Error processing QR scan' })
       setScannedStudent(null)
+    } finally {
+      setIsAutoMarking(false)
     }
   }
 
@@ -202,7 +242,12 @@ export default function TeacherAttendancePage() {
       console.log('Attendance marking response:', data)
       
       if (data.success) {
-        setMessage({ type: 'success', text: 'Attendance marked successfully!' })
+        setMessage({ 
+          type: 'success', 
+          text: data.alreadyMarked
+            ? 'Attendance was already marked earlier today.'
+            : 'Attendance marked successfully!'
+        })
         setScannedStudent(null)
         setRemarks('')
         setAttendanceStatus('PRESENT')
@@ -239,6 +284,10 @@ export default function TeacherAttendancePage() {
     }
     
     return { status: 'PENDING', message: 'Payment pending' }
+  }
+
+  const handleScannerError = (errorMessage: string) => {
+    setMessage({ type: 'error', text: errorMessage || 'Scanner error occurred' })
   }
 
   if (loading) {
@@ -324,7 +373,23 @@ export default function TeacherAttendancePage() {
             <div className="bg-white/80 backdrop-blur-md rounded-2xl shadow-xl border border-white/20 p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">QR Code Scanner</h3>
               <QRCodeScanner
+                onResult={handleQRScan}
+                onDecode={handleQRScan}
+                onScan={handleQRScan}
+                onError={handleScannerError}
               />
+              {isAutoMarking && (
+                <div className="mt-4 flex items-center space-x-3 rounded-lg bg-purple-50 border border-purple-100 px-4 py-2 text-sm text-purple-700">
+                  <motion.div
+                    animate={{ rotate: 360 }}
+                    transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+                    className="w-4 h-4 border-2 border-purple-500 border-t-transparent rounded-full"
+                  />
+                  <span>
+                    Marking attendance{currentScanValue ? ` for ${currentScanValue}` : ''}...
+                  </span>
+                </div>
+              )}
             </div>
           </motion.div>
 
@@ -443,7 +508,7 @@ export default function TeacherAttendancePage() {
                     </label>
                     <select
                       value={attendanceStatus}
-                      onChange={(e) => setAttendanceStatus(e.target.value as any)}
+                      onChange={(e) => setAttendanceStatus(e.target.value as 'PRESENT' | 'LATE' | 'ABSENT')}
                       className="w-full px-4 py-3 bg-white/50 backdrop-blur-sm border border-purple-200 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-200"
                     >
                       <option value="PRESENT">Present</option>

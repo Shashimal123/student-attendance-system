@@ -6,7 +6,8 @@
     "dev": "next dev --turbopack",
     "build": "next build --turbopack",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "tsx --test \"tests/**/*.test.ts\""
   },
   "dependencies": {
     "@headlessui/react": "^2.2.7",
@@ -45,6 +46,7 @@
     "eslint": "^9",
     "eslint-config-next": "15.5.1",
     "tailwindcss": "^4",
+    "tsx": "^4.19.2",
     "typescript": "^5"
   }
 }

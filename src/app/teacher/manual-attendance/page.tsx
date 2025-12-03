@@ -76,7 +76,7 @@ export default function ManualAttendancePage() {
       
       const data = await response.json()
       if (data.success) {
-        setStudents(data.students.map((student: any) => ({
+        setStudents(data.students.map((student: Student) => ({
           ...student,
           attendanceStatus: 'PRESENT' // Default status
         })))
@@ -111,36 +111,37 @@ export default function ManualAttendancePage() {
 
     try {
       const token = localStorage.getItem('token')
-      const attendanceData = [{
-        studentId: student.id,
-        courseId: selectedCourse,
-        status: student.attendanceStatus || 'PRESENT',
-        remarks: ''
-      }]
-
-      const response = await fetch('/api/attendance/bulk-mark', {
+      const response = await fetch('/api/attendance/mark', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({ attendanceRecords: attendanceData })
+        body: JSON.stringify({
+          studentId: student.id,
+          courseId: selectedCourse,
+          status: student.attendanceStatus || 'PRESENT',
+          remarks: 'Manual individual mark'
+        })
       })
 
       const data = await response.json()
       
-             if (data.success) {
-         // Remove this student from the list since attendance is already marked
-         const remainingStudents = students.filter(s => s.id !== studentId)
-         setStudents(remainingStudents)
-         
-         const remainingCount = remainingStudents.length
-         if (remainingCount === 0) {
-           setMessage({ type: 'success', text: `Attendance marked successfully for ${student.firstName} ${student.lastName}! All students have been marked for attendance.` })
-         } else {
-           setMessage({ type: 'success', text: `Attendance marked successfully for ${student.firstName} ${student.lastName}! ${remainingCount} student(s) remaining.` })
-         }
-       } else {
+      if (data.success) {
+        const remainingStudents = students.filter(s => s.id !== studentId)
+        setStudents(remainingStudents)
+        
+        const remainingCount = remainingStudents.length
+        const baseMessage = data.alreadyMarked
+          ? `Attendance was already marked for ${student.firstName} ${student.lastName}.`
+          : `Attendance marked successfully for ${student.firstName} ${student.lastName}!`
+
+        if (remainingCount === 0) {
+          setMessage({ type: 'success', text: `${baseMessage} All students have been marked.` })
+        } else {
+          setMessage({ type: 'success', text: `${baseMessage} ${remainingCount} student(s) remaining.` })
+        }
+      } else {
         setMessage({ type: 'error', text: data.error || 'Failed to mark attendance' })
       }
     } catch (error) {

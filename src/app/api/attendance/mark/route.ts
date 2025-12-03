@@ -1,213 +1,247 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { Attendance, AttendanceStatus } from '@prisma/client'
 import { withTeacherAuth } from '@/lib/middleware'
 import { prisma } from '@/lib/prisma'
 import { createAttendanceMarkedNotification } from '@/lib/notificationUtils'
 import { sendAttendanceEmail } from '@/lib/emailUtils'
+import type { AuthUser } from '@/lib/auth'
 
-async function handler(req: NextRequest) {
-  const user = (req as any).user
+class MarkAttendanceError extends Error {
+  status: number
 
-  try {
-    const { studentId, courseId, status, remarks } = await req.json()
+  constructor(message: string, status = 400) {
+    super(message)
+    this.status = status
+  }
+}
 
-    console.log('Attendance marking request:', { studentId, courseId, status, remarks })
+interface MarkAttendanceInput {
+  studentId: string
+  courseId: string
+  status: AttendanceStatus
+  remarks?: string
+  user: AuthUser
+}
 
-    if (!studentId || !courseId || !status) {
-      console.log('Missing required fields:', { studentId, courseId, status })
-      return NextResponse.json(
-        { error: 'Missing required fields' },
-        { status: 400 }
-      )
-    }
+interface MarkAttendanceResult {
+  success: true
+  attendance: Attendance
+  paymentWarning: {
+    status: string
+    message: string
+    amount?: number
+    dueDate?: string
+  } | null
+  alreadyMarked: boolean
+}
 
-    // Verify the course belongs to the teacher (unless admin)
-    let course
-    if (user.role !== 'ADMIN') {
-      course = await prisma.course.findFirst({
-        where: {
-          id: courseId,
-          teacher: {
-            userId: user.id
-          }
-        }
-      })
+export async function markAttendance({
+  studentId,
+  courseId,
+  status,
+  remarks,
+  user
+}: MarkAttendanceInput): Promise<MarkAttendanceResult> {
+  if (!studentId || !courseId || !status) {
+    throw new MarkAttendanceError('Missing required fields')
+  }
 
-      if (!course) {
-        console.log('Course not found for teacher:', { courseId, teacherId: user.id })
-        return NextResponse.json(
-          { error: 'Course not found or access denied' },
-          { status: 403 }
-        )
-      }
-    } else {
-      course = await prisma.course.findUnique({
-        where: { id: courseId }
-      })
-
-      if (!course) {
-        return NextResponse.json(
-          { error: 'Course not found' },
-          { status: 404 }
-        )
-      }
-    }
-
-    // Check if student is enrolled in the course
-    const enrollment = await prisma.courseEnrollment.findFirst({
-      where: {
-        studentId,
-        courseId,
-        isActive: true
-      }
-    })
-
-    if (!enrollment) {
-      console.log('Student not enrolled in course:', { studentId, courseId })
-      return NextResponse.json(
-        { error: 'Student is not enrolled in this course' },
-        { status: 400 }
-      )
-    }
-
-    // Check payment status for current month
-    const currentDate = new Date()
-    const currentMonth = currentDate.getMonth() + 1
-    const currentYear = currentDate.getFullYear()
-
-    const payment = await prisma.payment.findFirst({
-      where: {
-        studentId,
-        courseId,
-        month: currentMonth,
-        year: currentYear
-      }
-    })
-
-    let paymentStatus = payment ? payment.status : 'PENDING'
-    let paymentWarning = null
-
-    // If payment is pending and due date has passed, mark as overdue
-    if (payment && payment.status === 'PENDING' && payment.dueDate < currentDate) {
-      await prisma.payment.update({
-        where: { id: payment.id },
-        data: { status: 'OVERDUE' }
-      })
-      paymentStatus = 'OVERDUE'
-    }
-
-    // Create payment warning if not paid
-    if (paymentStatus !== 'PAID') {
-      paymentWarning = {
-        status: paymentStatus,
-        message: paymentStatus === 'OVERDUE' 
-          ? 'Payment is overdue. Please contact the administration.'
-          : 'Payment is pending for this month.',
-        amount: payment?.amount || course.fee,
-        dueDate: payment?.dueDate?.toISOString() || new Date(currentYear, currentMonth - 1, 15).toISOString()
-      }
-    }
-
-    // Check if attendance already marked for today
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    const tomorrow = new Date(today)
-    tomorrow.setDate(tomorrow.getDate() + 1)
-
-    const existingAttendance = await prisma.attendance.findFirst({
-      where: {
-        studentId,
-        courseId,
-        date: {
-          gte: today,
-          lt: tomorrow
+  const course = await prisma.course.findFirst({
+    where: user.role === 'ADMIN'
+      ? { id: courseId }
+      : {
+        id: courseId,
+        teacher: {
+          userId: user.id
         }
       }
+  })
+
+  if (!course) {
+    throw new MarkAttendanceError('Course not found or access denied', 403)
+  }
+
+  const enrollment = await prisma.courseEnrollment.findFirst({
+    where: {
+      studentId,
+      courseId,
+      isActive: true
+    }
+  })
+
+  if (!enrollment) {
+    throw new MarkAttendanceError('Student is not enrolled in this course')
+  }
+
+  const student = await prisma.student.findUnique({
+    where: { id: studentId },
+    include: { user: true }
+  })
+
+  if (!student) {
+    throw new MarkAttendanceError('Student not found', 404)
+  }
+
+  const currentDate = new Date()
+  const currentMonth = currentDate.getMonth() + 1
+  const currentYear = currentDate.getFullYear()
+
+  const payment = await prisma.payment.findFirst({
+    where: {
+      studentId,
+      courseId,
+      month: currentMonth,
+      year: currentYear
+    }
+  })
+
+  let paymentStatus = payment ? payment.status : 'PENDING'
+  let paymentWarning: MarkAttendanceResult['paymentWarning'] = null
+
+  if (payment && payment.status === 'PENDING' && payment.dueDate < currentDate) {
+    await prisma.payment.update({
+      where: { id: payment.id },
+      data: { status: 'OVERDUE' }
     })
+    paymentStatus = 'OVERDUE'
+  }
+
+  if (paymentStatus !== 'PAID') {
+    paymentWarning = {
+      status: paymentStatus,
+      message: paymentStatus === 'OVERDUE'
+        ? 'Payment is overdue. Please contact the administration.'
+        : 'Payment is pending for this month.',
+      amount: payment?.amount || course.fee,
+      dueDate: payment?.dueDate?.toISOString() || new Date(currentYear, currentMonth - 1, 15).toISOString()
+    }
+  }
+
+  const attendanceDate = new Date()
+  attendanceDate.setHours(0, 0, 0, 0)
+
+  const { attendanceRecord, alreadyMarked } = await prisma.$transaction(async (tx) => {
+    const existingAttendance = await tx.attendance.findUnique({
+      where: {
+        studentId_courseId_date: {
+          studentId,
+          courseId,
+          date: attendanceDate
+        }
+      }
+    })
+
+    let alreadyMarked = false
+    let record
 
     if (existingAttendance) {
-      // Update existing attendance
-      const updatedAttendance = await prisma.attendance.update({
-        where: { id: existingAttendance.id },
-        data: {
-          status,
-          remarks,
-          scannedAt: new Date()
-        }
-      })
+      const shouldUpdate = existingAttendance.status !== status || (existingAttendance.remarks || '') !== (remarks || '')
 
-      // Create notification for student
-      await createAttendanceMarkedNotification(studentId, course.name, status)
-
-      // Send attendance email to student (optional)
-      try {
-        const student = await prisma.student.findUnique({
-          where: { id: studentId },
-          include: { user: true }
+      if (shouldUpdate) {
+        record = await tx.attendance.update({
+          where: { id: existingAttendance.id },
+          data: {
+            status,
+            remarks,
+            scannedAt: new Date()
+          }
         })
-        
-        if (student && student.user.email) {
-          await sendAttendanceEmail(
-            student.user.email,
-            `${student.firstName} ${student.lastName}`,
-            course.name,
-            status
-          )
-        }
-      } catch (error) {
-        console.error('Error sending attendance email:', error)
-        // Don't fail attendance marking if email fails
+      } else {
+        alreadyMarked = true
+        record = existingAttendance
       }
-
-      return NextResponse.json({
-        success: true,
-        message: 'Attendance updated successfully',
-        attendance: updatedAttendance,
-        paymentWarning
-      })
     } else {
-      // Create new attendance record
-      const newAttendance = await prisma.attendance.create({
+      record = await tx.attendance.create({
         data: {
           studentId,
           courseId,
-          date: today,
+          date: attendanceDate,
           status,
           remarks,
           scannedAt: new Date()
         }
       })
-
-      // Create notification for student
-      await createAttendanceMarkedNotification(studentId, course.name, status)
-
-      // Send attendance email to student (optional)
-      try {
-        const student = await prisma.student.findUnique({
-          where: { id: studentId },
-          include: { user: true }
-        })
-        
-        if (student && student.user.email) {
-          await sendAttendanceEmail(
-            student.user.email,
-            `${student.firstName} ${student.lastName}`,
-            course.name,
-            status
-          )
-        }
-      } catch (error) {
-        console.error('Error sending attendance email:', error)
-        // Don't fail attendance marking if email fails
-      }
-
-      return NextResponse.json({
-        success: true,
-        message: 'Attendance marked successfully',
-        attendance: newAttendance,
-        paymentWarning
-      })
     }
+
+    const aggregates = await tx.attendance.groupBy({
+      by: ['status'],
+      where: {
+        courseId,
+        date: attendanceDate
+      },
+      _count: {
+        _all: true
+      }
+    })
+
+    const summary = {
+      presentCount: aggregates.find((group) => group.status === 'PRESENT')?._count._all ?? 0,
+      lateCount: aggregates.find((group) => group.status === 'LATE')?._count._all ?? 0,
+      absentCount: aggregates.find((group) => group.status === 'ABSENT')?._count._all ?? 0
+    }
+
+    await tx.attendanceReport.upsert({
+      where: {
+        courseId_date: {
+          courseId,
+          date: attendanceDate
+        }
+      },
+      update: summary,
+      create: {
+        courseId,
+        date: attendanceDate,
+        ...summary
+      }
+    })
+
+    return { attendanceRecord: record, alreadyMarked }
+  })
+
+  if (!alreadyMarked) {
+    await createAttendanceMarkedNotification(student.id, course.name, status)
+
+    try {
+      if (student.user?.email) {
+        await sendAttendanceEmail(
+          student.user.email,
+          `${student.firstName} ${student.lastName}`,
+          course.name,
+          status
+        )
+      }
+    } catch (error) {
+      console.error('Error sending attendance email:', error)
+    }
+  }
+
+  return {
+    success: true as const,
+    attendance: attendanceRecord,
+    paymentWarning,
+    alreadyMarked
+  }
+}
+
+async function handler(req: NextRequest) {
+  const user = (req as any).user as AuthUser
+
+  try {
+    const body = await req.json()
+    const result = await markAttendance({
+      studentId: body.studentId,
+      courseId: body.courseId,
+      status: body.status,
+      remarks: body.remarks,
+      user
+    })
+
+    return NextResponse.json(result)
   } catch (error) {
+    if (error instanceof MarkAttendanceError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
+
     console.error('Error marking attendance:', error)
     return NextResponse.json(
       { error: 'Internal server error' },
