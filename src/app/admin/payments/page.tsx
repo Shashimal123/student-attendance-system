@@ -445,7 +445,7 @@ export default function AdminPaymentsPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-600">Total Collected</p>
-                  <p className="text-2xl font-bold text-gray-900">${statistics.totalCollected.toFixed(2)}</p>
+                  <p className="text-2xl font-bold text-gray-900">Rs {statistics.totalCollected.toFixed(2)}</p>
                 </div>
                 <div className="w-12 h-12 bg-green-100 rounded-full flex items-center justify-center">
                   <span className="text-2xl">💰</span>
@@ -457,7 +457,7 @@ export default function AdminPaymentsPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-600">Pending</p>
-                  <p className="text-2xl font-bold text-gray-900">${statistics.pendingAmount.toFixed(2)}</p>
+                  <p className="text-2xl font-bold text-gray-900">Rs {statistics.pendingAmount.toFixed(2)}</p>
                 </div>
                 <div className="w-12 h-12 bg-yellow-100 rounded-full flex items-center justify-center">
                   <span className="text-2xl">⏳</span>
@@ -469,7 +469,7 @@ export default function AdminPaymentsPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-600">Grace Period</p>
-                  <p className="text-2xl font-bold text-gray-900">${statistics.gracePeriodAmount.toFixed(2)}</p>
+                  <p className="text-2xl font-bold text-gray-900">Rs {statistics.gracePeriodAmount.toFixed(2)}</p>
                 </div>
                 <div className="w-12 h-12 bg-orange-100 rounded-full flex items-center justify-center">
                   <span className="text-2xl">⚠️</span>
@@ -481,7 +481,7 @@ export default function AdminPaymentsPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-600">Overdue</p>
-                  <p className="text-2xl font-bold text-gray-900">${statistics.overdueAmount.toFixed(2)}</p>
+                  <p className="text-2xl font-bold text-gray-900">Rs {statistics.overdueAmount.toFixed(2)}</p>
                 </div>
                 <div className="w-12 h-12 bg-red-100 rounded-full flex items-center justify-center">
                   <span className="text-2xl">🚫</span>
@@ -622,7 +622,7 @@ export default function AdminPaymentsPage() {
                                 {getMonthName(payment.month)} {payment.year}
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                                ${payment.amount.toFixed(2)}
+                                Rs {payment.amount.toFixed(2)}
                               </td>
                               <td className="px-6 py-4 whitespace-nowrap">
                                 <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusColor(payment.status)}`}>
@@ -817,13 +817,13 @@ export default function AdminPaymentsPage() {
                                     {getMonthName(payout.month)} {payout.year}
                                   </td>
                                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                                    ${payout.totalCollected.toFixed(2)}
+                                    Rs {payout.totalCollected.toFixed(2)}
                                   </td>
                                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-green-600">
-                                    ${payout.teacherShare.toFixed(2)}
+                                    Rs {payout.teacherShare.toFixed(2)}
                                   </td>
                                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-blue-600">
-                                    ${payout.instituteShare.toFixed(2)}
+                                    Rs {payout.instituteShare.toFixed(2)}
                                   </td>
                                   <td className="px-6 py-4 whitespace-nowrap">
                                     <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
@@ -856,7 +856,7 @@ export default function AdminPaymentsPage() {
                             </div>
                             <div className="ml-4">
                               <p className="text-sm font-medium text-green-800">Total Collected</p>
-                              <p className="text-2xl font-bold text-green-900">${payoutStatistics.totalCollected.toFixed(2)}</p>
+                              <p className="text-2xl font-bold text-green-900">Rs {payoutStatistics.totalCollected.toFixed(2)}</p>
                             </div>
                           </div>
                         </div>
@@ -867,7 +867,7 @@ export default function AdminPaymentsPage() {
                             </div>
                             <div className="ml-4">
                               <p className="text-sm font-medium text-blue-800">Teacher Share</p>
-                              <p className="text-2xl font-bold text-blue-900">${payoutStatistics.totalTeacherShare.toFixed(2)}</p>
+                              <p className="text-2xl font-bold text-blue-900">Rs {payoutStatistics.totalTeacherShare.toFixed(2)}</p>
                             </div>
                           </div>
                         </div>
@@ -878,7 +878,7 @@ export default function AdminPaymentsPage() {
                             </div>
                             <div className="ml-4">
                               <p className="text-sm font-medium text-purple-800">Institute Share</p>
-                              <p className="text-2xl font-bold text-purple-900">${payoutStatistics.totalInstituteShare.toFixed(2)}</p>
+                              <p className="text-2xl font-bold text-purple-900">Rs {payoutStatistics.totalInstituteShare.toFixed(2)}</p>
                             </div>
                           </div>
                         </div>
@@ -935,7 +935,7 @@ export default function AdminPaymentsPage() {
                   <option value="">Select a course...</option>
                   {courses.map((course) => (
                     <option key={course.code} value={course.code}>
-                      {course.name} ({course.code}) - ${course.fee}
+                      {course.name} ({course.code}) - Rs {course.fee}
                     </option>
                   ))}
                 </select>
@@ -970,7 +970,7 @@ export default function AdminPaymentsPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Amount {selectedCourseFee > 0 && `(Course Fee: $${selectedCourseFee})`}
+                  Amount {selectedCourseFee > 0 && `(Course Fee: Rs ${selectedCourseFee})`}
                 </label>
                 <input
                   type="number"
@@ -978,7 +978,7 @@ export default function AdminPaymentsPage() {
                   value={registrationForm.amount}
                   onChange={(e) => setRegistrationForm(prev => ({ ...prev, amount: e.target.value }))}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-                  placeholder={selectedCourseFee > 0 ? `Enter amount (suggested: $${selectedCourseFee})` : "Enter amount"}
+                  placeholder={selectedCourseFee > 0 ? `Enter amount (suggested: Rs ${selectedCourseFee})` : "Enter amount"}
                 />
               </div>
 
