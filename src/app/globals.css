@@ -25,6 +25,43 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+/* Input Field Text Visibility - Ensure all inputs have dark text and readable placeholders */
+input,
+textarea,
+select {
+  color: #111 !important;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: #555 !important;
+  opacity: 1;
+}
+
+input::-webkit-input-placeholder,
+textarea::-webkit-input-placeholder {
+  color: #555 !important;
+  opacity: 1;
+}
+
+input::-moz-placeholder,
+textarea::-moz-placeholder {
+  color: #555 !important;
+  opacity: 1;
+}
+
+input:-ms-input-placeholder,
+textarea:-ms-input-placeholder {
+  color: #555 !important;
+  opacity: 1;
+}
+
+input:-moz-placeholder,
+textarea:-moz-placeholder {
+  color: #555 !important;
+  opacity: 1;
+}
+
 /* QR Scanner Styles */
 #qr-reader {
   width: 100% !important;

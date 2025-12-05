@@ -977,7 +977,7 @@ export default function AdminPaymentsPage() {
                   step="0.01"
                   value={registrationForm.amount}
                   onChange={(e) => setRegistrationForm(prev => ({ ...prev, amount: e.target.value }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-900 placeholder-gray-600"
                   placeholder={selectedCourseFee > 0 ? `Enter amount (suggested: Rs ${selectedCourseFee})` : "Enter amount"}
                 />
               </div>
@@ -987,7 +987,7 @@ export default function AdminPaymentsPage() {
                 <select
                   value={registrationForm.paymentMethod}
                   onChange={(e) => setRegistrationForm(prev => ({ ...prev, paymentMethod: e.target.value as any }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent text-gray-900"
                 >
                   <option value="CASH">Cash</option>
                   <option value="CARD">Card</option>
