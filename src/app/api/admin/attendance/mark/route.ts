@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAdminAuth } from '@/lib/middleware'
 import { prisma } from '@/lib/prisma'
+import { markAttendance } from '@/app/api/attendance/mark/route'
+import { AttendanceStatus } from '@prisma/client'
 
 async function handler(req: NextRequest) {
   if (req.method !== 'POST') {
@@ -8,7 +10,8 @@ async function handler(req: NextRequest) {
   }
 
   try {
-    const { studentId, courseId, status } = await req.json()
+    const user = (req as any).user
+    const { studentId, courseId, status, remarks, latePayment } = await req.json()
 
     if (!studentId || !courseId || !status) {
       return NextResponse.json(
@@ -17,9 +20,14 @@ async function handler(req: NextRequest) {
       )
     }
 
-    // Find the student by student ID
+    // Find the student by either internal id or public studentId
     const student = await prisma.student.findFirst({
-      where: { studentId },
+      where: {
+        OR: [
+          { id: studentId },
+          { studentId }
+        ]
+      },
       include: {
         enrollments: {
           where: { courseId, isActive: true }
@@ -41,68 +49,17 @@ async function handler(req: NextRequest) {
       )
     }
 
-    // Check if attendance already exists for today
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    const tomorrow = new Date(today)
-    tomorrow.setDate(tomorrow.getDate() + 1)
-
-    const existingAttendance = await prisma.attendance.findFirst({
-      where: {
-        studentId: student.id,
-        courseId,
-        date: {
-          gte: today,
-          lt: tomorrow
-        }
-      }
+    // FIX: QR attendance not writing to DB
+    const result = await markAttendance({
+      studentId: student.id,
+      courseId,
+      status: status as AttendanceStatus,
+      remarks,
+      latePayment,
+      user
     })
 
-    if (existingAttendance) {
-      return NextResponse.json(
-        { error: 'Attendance already marked for today' },
-        { status: 400 }
-      )
-    }
-
-    // Create attendance record
-    const attendance = await prisma.attendance.create({
-      data: {
-        studentId: student.id,
-        courseId,
-        date: new Date(),
-        status: status as 'PRESENT' | 'ABSENT' | 'LATE',
-        scannedAt: new Date()
-      },
-      include: {
-        student: {
-          select: {
-            firstName: true,
-            lastName: true,
-            studentId: true
-          }
-        },
-        course: {
-          select: {
-            name: true,
-            code: true
-          }
-        }
-      }
-    })
-
-    return NextResponse.json({
-      success: true,
-      message: 'Attendance marked successfully',
-      attendance: {
-        id: attendance.id,
-        student: attendance.student,
-        course: attendance.course,
-        date: attendance.date.toISOString(),
-        status: attendance.status,
-        scannedAt: attendance.scannedAt.toISOString()
-      }
-    })
+    return NextResponse.json(result)
   } catch (error) {
     console.error('Error marking attendance:', error)
     return NextResponse.json(

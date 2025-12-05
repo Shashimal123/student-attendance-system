@@ -26,9 +26,15 @@ async function handler(req: NextRequest) {
         )
       }
 
-      // Find course
+      // FIX: payment check null handling
+      // Find course by either internal id or public code
       const course = await prisma.course.findFirst({
-        where: { code: courseId }
+        where: {
+          OR: [
+            { id: courseId },
+            { code: courseId }
+          ]
+        }
       })
 
       if (!course) {
@@ -56,6 +62,8 @@ async function handler(req: NextRequest) {
       let paymentStatus = 'NO_PAYMENT_RECORD'
       let canAttend = true
       let message = ''
+      let allowLatePayment = false
+      let requiresLatePayment = false
 
       if (payment) {
         paymentStatus = payment.status
@@ -67,18 +75,20 @@ async function handler(req: NextRequest) {
             break
           
           case 'PENDING':
-            canAttend = true
-            message = 'Payment pending. Attendance allowed.'
+            allowLatePayment = true
+            message = 'Payment pending for this month.'
             break
           
           case 'GRACE_PERIOD':
-            canAttend = true
+            allowLatePayment = true
             message = 'Payment pending for this month. Grace period active.'
             break
           
           case 'OVERDUE':
             canAttend = false
-            message = 'Payment overdue. Attendance blocked until payment is made.'
+            allowLatePayment = true
+            requiresLatePayment = true
+            message = 'Payment overdue for this month.'
             break
           
           default:
@@ -96,14 +106,18 @@ async function handler(req: NextRequest) {
         if (now > gracePeriodEnd) {
           status = 'OVERDUE'
           canAttend = false
-          message = 'Payment overdue. Attendance blocked until payment is made.'
+          allowLatePayment = true
+          requiresLatePayment = true
+          message = 'Payment overdue for this month.'
         } else if (now > dueDate) {
           status = 'GRACE_PERIOD'
           canAttend = true
+          allowLatePayment = true
           message = 'Payment pending for this month. Grace period active.'
         } else {
           canAttend = true
-          message = 'Payment pending. Attendance allowed.'
+          allowLatePayment = true
+          message = 'Payment pending for this month.'
         }
 
         // Create payment record
@@ -127,6 +141,8 @@ async function handler(req: NextRequest) {
       return NextResponse.json({
         success: true,
         canAttend,
+        allowLatePayment,
+        requiresLatePayment,
         paymentStatus,
         message,
         student: {

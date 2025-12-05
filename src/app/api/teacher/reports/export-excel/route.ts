@@ -75,6 +75,7 @@ async function handler(req: NextRequest) {
         'Course': record.course.name,
         'Date': record.date.toLocaleDateString(),
         'Status': record.status,
+        'Late Payment': record.latePayment ? 'YES' : 'NO',
         'Remarks': record.remarks || ''
       }))
 
@@ -89,6 +90,7 @@ async function handler(req: NextRequest) {
         { wch: 20 }, // Course
         { wch: 12 }, // Date
         { wch: 10 }, // Status
+        { wch: 14 }, // Late Payment
         { wch: 30 }  // Remarks
       ]
       worksheet['!cols'] = columnWidths

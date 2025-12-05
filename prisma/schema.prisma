@@ -160,6 +160,7 @@ model Attendance {
   courseId  String
   date      DateTime
   status    AttendanceStatus @default(PRESENT)
+  latePayment Boolean        @default(false)
   scannedAt DateTime         @default(now())
   remarks   String?
 

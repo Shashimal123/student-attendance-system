@@ -4,6 +4,7 @@ import { useAuth } from '@/contexts/AuthContext'
 import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
+import { saveAttendance } from '@/lib/attendanceClient'
 
 interface Student {
   id: string
@@ -28,6 +29,7 @@ export default function ManualAttendancePage() {
   const [students, setStudents] = useState<Student[]>([])
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
+  const [pendingLatePayment, setPendingLatePayment] = useState<{ studentId: string, status: 'PRESENT' | 'LATE' | 'ABSENT' } | null>(null)
 
   useEffect(() => {
     if (!loading && (!user || (user.role !== 'TEACHER' && user.role !== 'ADMIN'))) {
@@ -94,7 +96,7 @@ export default function ManualAttendancePage() {
     ))
   }
 
-  const handleMarkIndividualAttendance = async (studentId: string) => {
+  const handleMarkIndividualAttendance = async (studentId: string, allowLatePayment = false) => {
     if (!selectedCourse) {
       setMessage({ type: 'error', text: 'Please select a course' })
       return
@@ -110,31 +112,54 @@ export default function ManualAttendancePage() {
     setMessage(null)
 
     try {
-      const token = localStorage.getItem('token')
-      const response = await fetch('/api/attendance/mark', {
+      const token = localStorage.getItem('token') || ''
+
+      // Check payment status to decide on late payment handling
+      const paymentResponse = await fetch('/api/attendance/check-payment', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
         body: JSON.stringify({
-          studentId: student.id,
-          courseId: selectedCourse,
-          status: student.attendanceStatus || 'PRESENT',
-          remarks: 'Manual individual mark'
+          studentId: student.studentId,
+          courseId: selectedCourse
         })
       })
 
-      const data = await response.json()
+      const paymentData = await paymentResponse.json()
+      if (!paymentData.success) {
+        setMessage({ type: 'error', text: paymentData.error || 'Error checking payment status' })
+        return
+      }
+
+      if (paymentData.allowLatePayment && paymentData.paymentStatus !== 'PAID' && !allowLatePayment) {
+        setPendingLatePayment({ studentId, status: student.attendanceStatus || 'PRESENT' })
+        setMessage({
+          type: 'error',
+          text: paymentData.message || 'Payment is pending. Tap "Allow with Late Payment" to continue.'
+        })
+        return
+      }
+
+      const data = await saveAttendance({
+        studentId: student.id,
+        courseId: selectedCourse,
+        status: student.attendanceStatus || 'PRESENT',
+        remarks: allowLatePayment ? 'Manual mark with late payment override' : 'Manual individual mark',
+        latePayment: allowLatePayment || paymentData.paymentStatus !== 'PAID',
+        token
+      })
       
       if (data.success) {
         const remainingStudents = students.filter(s => s.id !== studentId)
         setStudents(remainingStudents)
+        setPendingLatePayment(null)
         
         const remainingCount = remainingStudents.length
         const baseMessage = data.alreadyMarked
           ? `Attendance was already marked for ${student.firstName} ${student.lastName}.`
-          : `Attendance marked successfully for ${student.firstName} ${student.lastName}!`
+          : `Attendance marked successfully for ${student.firstName} ${student.lastName}${allowLatePayment ? ' with Late Payment.' : '!'}` 
 
         if (remainingCount === 0) {
           setMessage({ type: 'success', text: `${baseMessage} All students have been marked.` })
@@ -314,7 +339,7 @@ export default function ManualAttendancePage() {
                              <motion.button
                                whileHover={{ scale: 1.02 }}
                                whileTap={{ scale: 0.98 }}
-                               onClick={() => handleMarkIndividualAttendance(student.id)}
+                                onClick={() => handleMarkIndividualAttendance(student.id)}
                                disabled={isSubmitting}
                                className="bg-gradient-to-r from-purple-600 to-pink-600 text-white px-4 py-2 rounded-lg font-medium hover:from-purple-700 hover:to-pink-700 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl text-sm"
                              >
@@ -347,6 +372,18 @@ export default function ManualAttendancePage() {
               }`}
             >
               {message.text}
+              {pendingLatePayment && message.type === 'error' && (
+                <div className="mt-3">
+                  <motion.button
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    onClick={() => handleMarkIndividualAttendance(pendingLatePayment.studentId, true)}
+                    className="bg-amber-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-amber-700 transition-all duration-200 shadow-md"
+                  >
+                    Allow with Late Payment
+                  </motion.button>
+                </div>
+              )}
             </motion.div>
           )}
 

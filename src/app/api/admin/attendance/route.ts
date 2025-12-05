@@ -61,6 +61,7 @@ async function handler(req: NextRequest) {
         course: record.course,
         date: record.date.toISOString(),
         status: record.status,
+        latePayment: record.latePayment,
         scannedAt: record.scannedAt.toISOString()
       }))
     })

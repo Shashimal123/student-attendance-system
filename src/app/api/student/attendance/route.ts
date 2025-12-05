@@ -75,7 +75,8 @@ async function handler(req: NextRequest) {
         courseName: record.course.name,
         date: record.date.toISOString(),
         status: record.status,
-        remarks: record.remarks
+        remarks: record.remarks,
+        latePayment: record.latePayment
       }))
     })
   } catch (error) {

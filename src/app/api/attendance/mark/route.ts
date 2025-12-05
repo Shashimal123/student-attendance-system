@@ -20,6 +20,7 @@ interface MarkAttendanceInput {
   courseId: string
   status: AttendanceStatus
   remarks?: string
+  latePayment?: boolean
   user: AuthUser
 }
 
@@ -33,13 +34,16 @@ interface MarkAttendanceResult {
     dueDate?: string
   } | null
   alreadyMarked: boolean
+  courseName: string
 }
 
+// FIX: unified save function
 export async function markAttendance({
   studentId,
   courseId,
   status,
   remarks,
+  latePayment,
   user
 }: MarkAttendanceInput): Promise<MarkAttendanceResult> {
   if (!studentId || !courseId || !status) {
@@ -134,8 +138,12 @@ export async function markAttendance({
     let alreadyMarked = false
     let record
 
+    const latePaymentFlag = latePayment ?? existingAttendance?.latePayment ?? false
+
     if (existingAttendance) {
-      const shouldUpdate = existingAttendance.status !== status || (existingAttendance.remarks || '') !== (remarks || '')
+      const shouldUpdate = existingAttendance.status !== status ||
+        (existingAttendance.remarks || '') !== (remarks || '') ||
+        existingAttendance.latePayment !== latePaymentFlag
 
       if (shouldUpdate) {
         record = await tx.attendance.update({
@@ -143,6 +151,7 @@ export async function markAttendance({
           data: {
             status,
             remarks,
+            latePayment: latePaymentFlag,
             scannedAt: new Date()
           }
         })
@@ -158,6 +167,7 @@ export async function markAttendance({
           date: attendanceDate,
           status,
           remarks,
+          latePayment: latePaymentFlag,
           scannedAt: new Date()
         }
       })
@@ -219,7 +229,8 @@ export async function markAttendance({
     success: true as const,
     attendance: attendanceRecord,
     paymentWarning,
-    alreadyMarked
+    alreadyMarked,
+    courseName: course.name
   }
 }
 

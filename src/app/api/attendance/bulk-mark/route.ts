@@ -3,6 +3,8 @@ import { withTeacherAuth } from '@/lib/middleware'
 import { prisma } from '@/lib/prisma'
 import { createAttendanceMarkedNotification } from '@/lib/notificationUtils'
 import { sendAttendanceEmail } from '@/lib/emailUtils'
+import { markAttendance } from '@/app/api/attendance/mark/route'
+import { AttendanceStatus } from '@prisma/client'
 
 async function handler(req: NextRequest) {
   const user = (req as any).user
@@ -18,13 +20,8 @@ async function handler(req: NextRequest) {
     }
 
     const results = []
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    const tomorrow = new Date(today)
-    tomorrow.setDate(tomorrow.getDate() + 1)
-
     for (const record of attendanceRecords) {
-      const { studentId, courseId, status, remarks } = record
+      const { studentId, courseId, status, remarks, latePayment } = record
 
       if (!studentId || !courseId || !status) {
         results.push({
@@ -36,99 +33,19 @@ async function handler(req: NextRequest) {
       }
 
       try {
-        // Verify the course belongs to the teacher (unless admin)
-        let course
-        if (user.role !== 'ADMIN') {
-          course = await prisma.course.findFirst({
-            where: {
-              id: courseId,
-              teacher: {
-                userId: user.id
-              }
-            }
-          })
-
-          if (!course) {
-            results.push({
-              studentId,
-              success: false,
-              error: 'Course not found or access denied'
-            })
-            continue
-          }
-        } else {
-          course = await prisma.course.findUnique({
-            where: { id: courseId }
-          })
-
-          if (!course) {
-            results.push({
-              studentId,
-              success: false,
-              error: 'Course not found'
-            })
-            continue
-          }
-        }
-
-        // Check if student is enrolled in the course
-        const enrollment = await prisma.courseEnrollment.findFirst({
-          where: {
-            studentId,
-            courseId,
-            isActive: true
-          }
+        const result = await markAttendance({
+          studentId,
+          courseId,
+          status: status as AttendanceStatus,
+          remarks,
+          latePayment,
+          user
         })
-
-        if (!enrollment) {
-          results.push({
-            studentId,
-            success: false,
-            error: 'Student is not enrolled in this course'
-          })
-          continue
-        }
-
-        // Check if attendance already marked for today
-        const existingAttendance = await prisma.attendance.findFirst({
-          where: {
-            studentId,
-            courseId,
-            date: {
-              gte: today,
-              lt: tomorrow
-            }
-          }
-        })
-
-        let attendanceRecord
-        if (existingAttendance) {
-          // Update existing attendance
-          attendanceRecord = await prisma.attendance.update({
-            where: { id: existingAttendance.id },
-            data: {
-              status,
-              remarks,
-              scannedAt: new Date()
-            }
-          })
-        } else {
-          // Create new attendance record
-          attendanceRecord = await prisma.attendance.create({
-            data: {
-              studentId,
-              courseId,
-              date: today,
-              status,
-              remarks,
-              scannedAt: new Date()
-            }
-          })
-        }
+        const attendanceRecord = result.attendance
 
         // Create notification for student
         try {
-          await createAttendanceMarkedNotification(studentId, course.name, status)
+          await createAttendanceMarkedNotification(studentId, result.courseName, status as AttendanceStatus)
         } catch (error) {
           console.error('Error creating notification:', error)
         }
@@ -144,7 +61,7 @@ async function handler(req: NextRequest) {
             await sendAttendanceEmail(
               student.user.email,
               `${student.firstName} ${student.lastName}`,
-              course.name,
+              result.courseName,
               status
             )
           }

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import QRCodeScanner from '@/components/QRCodeScanner'
 import { motion } from 'framer-motion'
+import { saveAttendance } from '@/lib/attendanceClient'
 
 interface Student {
   id: string
@@ -37,6 +38,12 @@ export default function TeacherAttendancePage() {
   const [isAutoMarking, setIsAutoMarking] = useState(false)
   const [currentScanValue, setCurrentScanValue] = useState<string | null>(null)
   const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null)
+  const [paymentInfo, setPaymentInfo] = useState<{
+    status: string
+    message: string
+    allowLatePayment: boolean
+    requiresLatePayment: boolean
+  } | null>(null)
 
   useEffect(() => {
     if (!loading && (!user || (user.role !== 'TEACHER' && user.role !== 'ADMIN'))) {
@@ -108,6 +115,7 @@ export default function TeacherAttendancePage() {
     setCurrentScanValue(scannedValue)
     setIsAutoMarking(true)
     setMessage(null)
+    setPaymentInfo(null)
 
     try {
       const token = localStorage.getItem('token')
@@ -145,56 +153,47 @@ export default function TeacherAttendancePage() {
       const paymentData = await paymentResponse.json()
       
       if (!paymentData.success) {
-        setMessage({ type: 'error', text: 'Error checking payment status' })
+        setMessage({ type: 'error', text: paymentData.error || 'Error checking payment status' })
         return
       }
 
-      if (!paymentData.canAttend) {
-        setMessage({ 
-          type: 'error', 
-          text: `🚫 Attendance Blocked: ${paymentData.message}` 
-        })
-        return
-      }
-
-      if (paymentData.paymentStatus === 'GRACE_PERIOD') {
-        setMessage({ 
-          type: 'error', 
-          text: `⚠️ Payment Pending: ${paymentData.message}` 
-        })
-      } else {
-        setMessage(null)
-      }
+      setPaymentInfo({
+        status: paymentData.paymentStatus,
+        message: paymentData.message,
+        allowLatePayment: paymentData.allowLatePayment,
+        requiresLatePayment: paymentData.requiresLatePayment
+      })
 
       setScannedStudent(student)
 
-      // Optimistically mark attendance via API
-      const autoMarkResponse = await fetch('/api/attendance/mark', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
+      // Auto mark only when the payment is fully cleared
+      if (paymentData.paymentStatus === 'PAID') {
+        const autoMarkData = await saveAttendance({
           studentId: student.id,
           courseId: selectedCourse,
           status: 'PRESENT',
-          remarks: 'Marked via QR scan'
+          remarks: 'Marked via QR scan',
+          latePayment: false,
+          token: token || ''
         })
-      })
 
-      const autoMarkData = await autoMarkResponse.json()
-      if (autoMarkData.success) {
+        if (autoMarkData.success) {
+          setMessage({
+            type: 'success',
+            text: autoMarkData.alreadyMarked
+              ? 'Attendance was already marked for this student today.'
+              : 'Attendance marked automatically!'
+          })
+          setAttendanceStatus('PRESENT')
+          setRemarks('')
+        } else {
+          setMessage({ type: 'error', text: autoMarkData.error || 'Failed to mark attendance automatically' })
+        }
+      } else if (paymentData.allowLatePayment) {
         setMessage({
-          type: 'success',
-          text: autoMarkData.alreadyMarked
-            ? 'Attendance was already marked for this student today.'
-            : 'Attendance marked automatically!'
+          type: 'error',
+          text: `⚠️ ${paymentData.message || 'Payment pending. Tap "Allow with Late Payment" to proceed.'}`
         })
-        setAttendanceStatus('PRESENT')
-        setRemarks('')
-      } else {
-        setMessage({ type: 'error', text: autoMarkData.error || 'Failed to mark attendance automatically' })
       }
     } catch (error) {
       console.error('Error processing QR scan:', error)
@@ -222,35 +221,29 @@ export default function TeacherAttendancePage() {
     setMessage(null)
 
     try {
-      const token = localStorage.getItem('token')
-      const response = await fetch('/api/attendance/mark', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          studentId: scannedStudent.id,
-          courseId: selectedCourse,
-          status: attendanceStatus,
-          remarks: remarks
-        })
+      const token = localStorage.getItem('token') || ''
+      const data = await saveAttendance({
+        studentId: scannedStudent.id,
+        courseId: selectedCourse,
+        status: attendanceStatus,
+        remarks,
+        latePayment: paymentInfo ? paymentInfo.status !== 'PAID' : false,
+        token
       })
 
-      console.log('Attendance marking response status:', response.status)
-      const data = await response.json()
-      console.log('Attendance marking response:', data)
-      
       if (data.success) {
         setMessage({ 
           type: 'success', 
           text: data.alreadyMarked
             ? 'Attendance was already marked earlier today.'
-            : 'Attendance marked successfully!'
+            : paymentInfo?.requiresLatePayment
+              ? 'Attendance marked with late payment flag.'
+              : 'Attendance marked successfully!'
         })
         setScannedStudent(null)
         setRemarks('')
         setAttendanceStatus('PRESENT')
+        setPaymentInfo(null)
       } else {
         setMessage({ type: 'error', text: data.error || 'Failed to mark attendance' })
       }
@@ -284,6 +277,41 @@ export default function TeacherAttendancePage() {
     }
     
     return { status: 'PENDING', message: 'Payment pending' }
+  }
+
+  const handleLatePaymentMark = async () => {
+    if (!scannedStudent || !selectedCourse) return
+    setIsMarking(true)
+    try {
+      const token = localStorage.getItem('token') || ''
+      const data = await saveAttendance({
+        studentId: scannedStudent.id,
+        courseId: selectedCourse,
+        status: 'PRESENT',
+        remarks: remarks || 'Marked with late payment override',
+        latePayment: true,
+        token
+      })
+      if (data.success) {
+        setMessage({
+          type: 'success',
+          text: data.alreadyMarked
+            ? 'Attendance was already marked for this student today.'
+            : 'Attendance marked with Late Payment.'
+        })
+        setScannedStudent(null)
+        setPaymentInfo(null)
+        setRemarks('')
+        setAttendanceStatus('PRESENT')
+      } else {
+        setMessage({ type: 'error', text: data.error || 'Failed to mark attendance with late payment' })
+      }
+    } catch (error) {
+      console.error('Error marking late payment attendance:', error)
+      setMessage({ type: 'error', text: 'Error marking attendance with late payment' })
+    } finally {
+      setIsMarking(false)
+    }
   }
 
   const handleScannerError = (errorMessage: string) => {
@@ -470,11 +498,13 @@ export default function TeacherAttendancePage() {
                         Payment Status
                       </label>
                       {(() => {
-                        const paymentStatus = checkPaymentStatus(scannedStudent)
+                        const paymentStatus = paymentInfo
+                          ? { status: paymentInfo.status, message: paymentInfo.message }
+                          : checkPaymentStatus(scannedStudent)
                         return (
                           <span className={`inline-flex px-3 py-1 text-xs font-semibold rounded-full ${
                             paymentStatus.status === 'PAID' 
-                              ? 'bg-green-100 text-green-800'
+                              ? 'bg-green-100 text-green-800' 
                               : paymentStatus.status === 'OVERDUE'
                               ? 'bg-red-100 text-red-800'
                               : 'bg-yellow-100 text-yellow-800'
@@ -502,6 +532,12 @@ export default function TeacherAttendancePage() {
                 </h3>
                 
                 <div className="space-y-4">
+                  {paymentInfo?.allowLatePayment && (
+                    <div className="rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-3 text-sm text-yellow-800">
+                      {paymentInfo.message || 'Payment missing for this month.'}
+                    </div>
+                  )}
+
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Attendance Status
@@ -550,6 +586,17 @@ export default function TeacherAttendancePage() {
                       'Mark Attendance'
                     )}
                   </motion.button>
+                  {paymentInfo?.allowLatePayment && (
+                    <motion.button
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={handleLatePaymentMark}
+                      disabled={isMarking}
+                      className="w-full bg-amber-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-amber-700 focus:ring-2 focus:ring-amber-500 focus:ring-offset-2 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl"
+                    >
+                      Allow with Late Payment
+                    </motion.button>
+                  )}
                 </div>
               </motion.div>
             )}

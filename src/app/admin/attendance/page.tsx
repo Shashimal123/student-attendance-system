@@ -18,6 +18,7 @@ interface AttendanceRecord {
   }
   date: string
   status: 'PRESENT' | 'ABSENT' | 'LATE'
+  latePayment?: boolean
   scannedAt: string
 }
 
@@ -251,6 +252,9 @@ export default function AdminAttendancePage() {
                     <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Scanned At
                     </th>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Flags
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
@@ -287,6 +291,15 @@ export default function AdminAttendancePage() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                         {new Date(record.scannedAt).toLocaleString()}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                        {record.latePayment ? (
+                          <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-amber-100 text-amber-800">
+                            Late Payment
+                          </span>
+                        ) : (
+                          '-'
+                        )}
                       </td>
                     </tr>
                   ))}

@@ -62,7 +62,8 @@ async function handler(req: NextRequest) {
       studentName: `${record.student.firstName} ${record.student.lastName}`,
       courseName: record.course.name,
       status: record.status,
-      remarks: record.remarks
+      remarks: record.remarks,
+      latePayment: record.latePayment
     }))
 
     return NextResponse.json({

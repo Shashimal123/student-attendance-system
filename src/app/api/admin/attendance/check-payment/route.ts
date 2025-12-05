@@ -39,9 +39,15 @@ async function handler(req: NextRequest) {
       )
     }
 
-    // Find course by code
+    // FIX: payment check null handling
+    // Find course by id or code to avoid null errors
     const course = await prisma.course.findFirst({
-      where: { code: courseId }
+      where: {
+        OR: [
+          { id: courseId },
+          { code: courseId }
+        ]
+      }
     })
 
     if (!course) {
@@ -77,6 +83,8 @@ async function handler(req: NextRequest) {
 
     let paymentStatus = payment ? payment.status : 'PENDING'
     let isOverdue = paymentStatus === 'OVERDUE'
+    let allowLatePayment = false
+    let requiresLatePayment = false
 
     // If payment is pending and due date has passed, mark as overdue
     if (payment && payment.status === 'PENDING' && payment.dueDate < currentDate) {
@@ -88,11 +96,18 @@ async function handler(req: NextRequest) {
       isOverdue = true
     }
 
+    if (paymentStatus !== 'PAID') {
+      allowLatePayment = true
+      requiresLatePayment = paymentStatus === 'OVERDUE'
+    }
+
     return NextResponse.json({
       success: true,
       paymentStatus,
       hasPaid: paymentStatus === 'PAID',
       isOverdue,
+      allowLatePayment,
+      requiresLatePayment,
       student: {
         id: student.id,
         studentId: student.studentId,

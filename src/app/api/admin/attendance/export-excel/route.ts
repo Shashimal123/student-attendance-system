@@ -63,6 +63,7 @@ async function handler(req: NextRequest) {
       'Course Name': record.course.name,
       'Date': new Date(record.date).toLocaleDateString(),
       'Status': record.status,
+      'Late Payment': record.latePayment ? 'YES' : 'NO',
       'Scanned At': new Date(record.scannedAt).toLocaleString()
     }))
 
