@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { withAdminAuth } from '@/lib/middleware'
 import { prisma } from '@/lib/prisma'
 import { hashPassword } from '@/lib/auth'
-import { v4 as uuidv4 } from 'uuid'
+import { generateStudentId } from '@/lib/studentUtils'
+import { generateQRCodeDataURL } from '@/lib/qrCodeUtils'
 
 async function handler(req: NextRequest) {
   if (req.method === 'GET') {
@@ -78,39 +79,13 @@ async function handler(req: NextRequest) {
       const selectedCourses = formData.get('selectedCourses') as string
       const photo = formData.get('photo') as File | null
 
-      console.log('Received student data:', {
-        firstName,
-        lastName,
-        email,
-        password: password ? '***' : 'MISSING',
-        dateOfBirth,
-        selectedCourses
-      })
-
-      // Validate required fields
-      console.log('Validating fields:', {
-        firstName: !!firstName,
-        lastName: !!lastName,
-        email: !!email,
-        password: !!password,
-        dateOfBirth: !!dateOfBirth
-      })
-      
       if (!firstName || !lastName || !email || !password || !dateOfBirth) {
-        console.log('Missing required fields:', { 
-          firstName: !!firstName, 
-          lastName: !!lastName, 
-          email: !!email, 
-          password: !!password, 
-          dateOfBirth: !!dateOfBirth 
-        })
         return NextResponse.json(
           { error: 'Missing required fields: First Name, Last Name, Email, Password, and Date of Birth are required.' },
           { status: 400 }
         )
       }
 
-      // Check if email already exists
       const existingUser = await prisma.user.findUnique({
         where: { email }
       })
@@ -122,7 +97,6 @@ async function handler(req: NextRequest) {
         )
       }
 
-      // Create user account
       const hashedPassword = await hashPassword(password)
       const user = await prisma.user.create({
         data: {
@@ -132,19 +106,18 @@ async function handler(req: NextRequest) {
         }
       })
 
-      // Generate unique student ID and QR code
-      const studentId = `STU${Date.now().toString().slice(-6)}`
-      const qrCode = `${studentId}-${uuidv4().slice(0, 8)}`
+      const studentId = await generateStudentId()
+      const qrCodeDataUrl = await generateQRCodeDataURL(studentId, {
+        width: 512,
+        margin: 2,
+        errorCorrectionLevel: 'H'
+      })
 
-      // Handle photo upload (for now, we'll store the file path)
       let photoUrl = null
       if (photo) {
-        // In a real application, you would upload to cloud storage
-        // For now, we'll store a placeholder
         photoUrl = `/uploads/students/${studentId}-${Date.now()}.jpg`
       }
 
-      // Create student profile
       const student = await prisma.student.create({
         data: {
           userId: user.id,
@@ -158,12 +131,11 @@ async function handler(req: NextRequest) {
           parentPhone,
           parentEmail,
           photo: photoUrl,
-          qrCode,
+          qrCode: studentId,
           isActive: true
         }
       })
 
-      // Enroll in selected courses
       if (selectedCourses) {
         const courseIds = selectedCourses.split(',').filter(id => id.trim())
         for (const courseId of courseIds) {
@@ -188,10 +160,9 @@ async function handler(req: NextRequest) {
           qrCode: student.qrCode
         }
       })
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error creating student:', error)
       
-      // Handle specific Prisma errors
       if (error.code === 'P2002') {
         return NextResponse.json(
           { error: 'Email already exists. Please use a different email address.' },
@@ -199,7 +170,6 @@ async function handler(req: NextRequest) {
         )
       }
       
-      // Handle validation errors
       if (error.name === 'PrismaClientValidationError') {
         return NextResponse.json(
           { error: 'Invalid data provided. Please check all required fields.' },

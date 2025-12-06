@@ -2,7 +2,7 @@
 
 import { useAuth } from '@/contexts/AuthContext'
 import { useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import QRCodeScanner from '@/components/QRCodeScanner'
 import { motion } from 'framer-motion'
 import { saveAttendance } from '@/lib/attendanceClient'
@@ -45,6 +45,8 @@ export default function TeacherAttendancePage() {
     requiresLatePayment: boolean
   } | null>(null)
 
+  const abortControllerRef = useRef<AbortController | null>(null)
+
   useEffect(() => {
     if (!loading && (!user || (user.role !== 'TEACHER' && user.role !== 'ADMIN'))) {
       router.push('/login')
@@ -53,48 +55,59 @@ export default function TeacherAttendancePage() {
 
   useEffect(() => {
     if (user && (user.role === 'TEACHER' || user.role === 'ADMIN')) {
-      fetchCourses()
-      fetchTodayClasses()
+      const controller = new AbortController()
+      abortControllerRef.current = controller
+
+      fetchCourses(controller.signal)
+      fetchTodayClasses(controller.signal)
+
+      return () => {
+        controller.abort()
+      }
     }
   }, [user])
 
-  const fetchCourses = async () => {
+  const fetchCourses = async (signal: AbortSignal) => {
     try {
       const token = localStorage.getItem('token')
       const response = await fetch('/api/teacher/courses', {
         headers: {
           'Authorization': `Bearer ${token}`
-        }
+        },
+        signal
       })
       
-      console.log('Courses fetch response status:', response.status)
+      if (signal.aborted) return
+
       const data = await response.json()
-      console.log('Courses fetch response:', data)
       
       if (data.success) {
-        setCourses(data.courses)
-        console.log('Courses loaded:', data.courses.length)
+        setCourses(data.courses || [])
       }
-    } catch (error) {
+    } catch (error: any) {
+      if (error.name === 'AbortError') return
       console.error('Error fetching courses:', error)
     }
   }
 
-  const fetchTodayClasses = async () => {
+  const fetchTodayClasses = async (signal: AbortSignal) => {
     try {
       const token = localStorage.getItem('token')
       const response = await fetch('/api/classes/today', {
         headers: {
           'Authorization': `Bearer ${token}`
-        }
+        },
+        signal
       })
       
+      if (signal.aborted) return
+
       const data = await response.json()
-      if (data.success && data.classes.length > 0) {
-        // Auto-select the first class of the day
+      if (data.success && data.classes?.length > 0) {
         setSelectedCourse(data.classes[0].course.id)
       }
-    } catch (error) {
+    } catch (error: any) {
+      if (error.name === 'AbortError') return
       console.error('Error fetching today\'s classes:', error)
     }
   }
@@ -104,8 +117,6 @@ export default function TeacherAttendancePage() {
     if (!scannedValue) {
       return
     }
-
-    console.log('QR Code scanned:', scannedValue)
 
     if (!selectedCourse) {
       setMessage({ type: 'error', text: 'Please select a course first' })
@@ -117,27 +128,30 @@ export default function TeacherAttendancePage() {
     setMessage(null)
     setPaymentInfo(null)
 
+    const controller = new AbortController()
+
     try {
       const token = localStorage.getItem('token')
-      const response = await fetch(`/api/students/by-id/${scannedValue}`, {
+      
+      const studentResponse = await fetch(`/api/students/by-id/${scannedValue}`, {
         headers: {
           'Authorization': `Bearer ${token}`
-        }
+        },
+        signal: controller.signal
       })
       
-      console.log('Student lookup response status:', response.status)
-      const data = await response.json()
-      console.log('Student lookup response:', data)
+      if (controller.signal.aborted) return
+
+      const studentData = await studentResponse.json()
       
-      if (!data.success) {
-        setMessage({ type: 'error', text: data.error || 'Student not found' })
+      if (!studentData.success) {
+        setMessage({ type: 'error', text: studentData.error || 'Student not found' })
         setScannedStudent(null)
         return
       }
 
-      const student = data.student
+      const student = studentData.student
 
-      // Check payment status using the existing API
       const paymentResponse = await fetch('/api/attendance/check-payment', {
         method: 'POST',
         headers: {
@@ -147,8 +161,11 @@ export default function TeacherAttendancePage() {
         body: JSON.stringify({
           studentId: student.studentId,
           courseId: selectedCourse
-        })
+        }),
+        signal: controller.signal
       })
+
+      if (controller.signal.aborted) return
 
       const paymentData = await paymentResponse.json()
       
@@ -166,7 +183,6 @@ export default function TeacherAttendancePage() {
 
       setScannedStudent(student)
 
-      // Auto mark only when the payment is fully cleared
       if (paymentData.paymentStatus === 'PAID') {
         const autoMarkData = await saveAttendance({
           studentId: student.id,
@@ -195,7 +211,8 @@ export default function TeacherAttendancePage() {
           text: `⚠️ ${paymentData.message || 'Payment pending. Tap "Allow with Late Payment" to proceed.'}`
         })
       }
-    } catch (error) {
+    } catch (error: any) {
+      if (error.name === 'AbortError') return
       console.error('Error processing QR scan:', error)
       setMessage({ type: 'error', text: 'Error processing QR scan' })
       setScannedStudent(null)
@@ -209,13 +226,6 @@ export default function TeacherAttendancePage() {
       setMessage({ type: 'error', text: 'Please select a course and scan a student QR code' })
       return
     }
-
-    console.log('Marking attendance:', {
-      studentId: scannedStudent.id,
-      courseId: selectedCourse,
-      status: attendanceStatus,
-      remarks: remarks
-    })
 
     setIsMarking(true)
     setMessage(null)
@@ -247,7 +257,8 @@ export default function TeacherAttendancePage() {
       } else {
         setMessage({ type: 'error', text: data.error || 'Failed to mark attendance' })
       }
-    } catch (error) {
+    } catch (error: any) {
+      if (error.name === 'AbortError') return
       console.error('Error marking attendance:', error)
       setMessage({ type: 'error', text: 'Error marking attendance' })
     } finally {
@@ -306,7 +317,8 @@ export default function TeacherAttendancePage() {
       } else {
         setMessage({ type: 'error', text: data.error || 'Failed to mark attendance with late payment' })
       }
-    } catch (error) {
+    } catch (error: any) {
+      if (error.name === 'AbortError') return
       console.error('Error marking late payment attendance:', error)
       setMessage({ type: 'error', text: 'Error marking attendance with late payment' })
     } finally {
@@ -336,7 +348,6 @@ export default function TeacherAttendancePage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 via-pink-50 to-blue-50">
-      {/* Header */}
       <motion.header 
         initial={{ y: -50, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
@@ -384,7 +395,6 @@ export default function TeacherAttendancePage() {
         </div>
       </motion.header>
 
-      {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -392,7 +402,6 @@ export default function TeacherAttendancePage() {
           transition={{ duration: 0.6, delay: 0.2 }}
           className="grid grid-cols-1 lg:grid-cols-2 gap-8"
         >
-          {/* QR Scanner */}
           <motion.div
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
@@ -421,14 +430,12 @@ export default function TeacherAttendancePage() {
             </div>
           </motion.div>
 
-          {/* Attendance Form */}
           <motion.div
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.6, delay: 0.4 }}
             className="space-y-6"
           >
-            {/* Course Selection */}
             <motion.div
               whileHover={{ scale: 1.02 }}
               className="bg-white/80 backdrop-blur-md rounded-2xl shadow-xl border border-white/20 p-6"
@@ -451,7 +458,6 @@ export default function TeacherAttendancePage() {
               </select>
             </motion.div>
 
-            {/* Scanned Student Info */}
             {scannedStudent && (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
@@ -492,7 +498,6 @@ export default function TeacherAttendancePage() {
                       </span>
                     </div>
 
-                    {/* Payment Status Check */}
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
                         Payment Status
@@ -519,7 +524,6 @@ export default function TeacherAttendancePage() {
               </motion.div>
             )}
 
-            {/* Attendance Form */}
             {scannedStudent && (
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
@@ -601,7 +605,6 @@ export default function TeacherAttendancePage() {
               </motion.div>
             )}
 
-            {/* Message Display */}
             {message && (
               <motion.div
                 initial={{ opacity: 0, y: 10 }}

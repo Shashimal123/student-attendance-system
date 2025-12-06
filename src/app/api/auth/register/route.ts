@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { createUser, generateToken, hashPassword } from '@/lib/auth'
-import { v4 as uuidv4 } from 'uuid'
-import QRCode from 'qrcode'
+import { createUser, generateToken } from '@/lib/auth'
+import { generateStudentId } from '@/lib/studentUtils'
 import { sendWelcomeEmail } from '@/lib/emailUtils'
 
 export async function POST(req: NextRequest) {
@@ -28,7 +27,6 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Check if user already exists
     const existingUser = await prisma.user.findUnique({
       where: { email }
     })
@@ -40,16 +38,12 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Create user
     const user = await createUser(email, password, role || 'STUDENT')
     
     let studentId = null
-    let qrCode = null
 
-    // If student, create student record with QR code
     if (role === 'STUDENT' || !role) {
-      studentId = `STU${Date.now()}${Math.random().toString(36).substr(2, 4).toUpperCase()}`
-      qrCode = await QRCode.toDataURL(studentId)
+      studentId = await generateStudentId()
 
       await prisma.student.create({
         data: {
@@ -63,12 +57,11 @@ export async function POST(req: NextRequest) {
           parentName,
           parentPhone,
           parentEmail,
-          qrCode,
+          qrCode: studentId,
         }
       })
     }
 
-    // If teacher, create teacher record
     if (role === 'TEACHER') {
       await prisma.teacher.create({
         data: {
@@ -80,7 +73,6 @@ export async function POST(req: NextRequest) {
       })
     }
 
-    // If admin, create admin record
     if (role === 'ADMIN') {
       await prisma.admin.create({
         data: {
@@ -93,13 +85,11 @@ export async function POST(req: NextRequest) {
 
     const token = generateToken(user)
 
-    // Send welcome email to student (optional)
     if (role === 'STUDENT' || !role) {
       try {
-        await sendWelcomeEmail(email, `${firstName} ${lastName}`, studentId)
+        await sendWelcomeEmail(email, `${firstName} ${lastName}`, studentId || '')
       } catch (error) {
         console.error('Error sending welcome email:', error)
-        // Don't fail registration if email fails
       }
     }
 

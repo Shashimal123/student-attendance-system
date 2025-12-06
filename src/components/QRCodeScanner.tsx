@@ -30,15 +30,17 @@ export default function QRCodeScanner({
   const [isScanning, setIsScanning] = useState(false)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const qrScannerRef = useRef<QrScanner | null>(null)
+  const isMountedRef = useRef(true)
 
   const emitResult = useCallback((data: string) => {
+    if (!isMountedRef.current) return
     onResult?.(data)
     onDecode?.(data)
     onScan?.(data)
   }, [onResult, onDecode, onScan])
 
   const handleScanResult = useCallback((data: string) => {
-    if (!data) {
+    if (!data || !isMountedRef.current) {
       return
     }
 
@@ -49,6 +51,8 @@ export default function QRCodeScanner({
   }, [emitResult])
 
   const startScanning = useCallback(async () => {
+    if (!isMountedRef.current) return
+
     try {
       if (!videoRef.current) {
         throw new Error('Video element not found')
@@ -58,15 +62,24 @@ export default function QRCodeScanner({
       setErrorMessage('')
 
       if (qrScannerRef.current) {
-        await qrScannerRef.current.start()
-        setIsScanning(true)
-        setStatus('Scanner running')
+        try {
+          await qrScannerRef.current.start()
+          if (!isMountedRef.current) return
+          setIsScanning(true)
+          setStatus('Scanner running')
+        } catch (err: any) {
+          if (err.name === 'AbortError' || err.name === 'NotAllowedError') {
+            return
+          }
+          throw err
+        }
         return
       }
 
       const scanner = new QrScanner(
         videoRef.current,
         (result) => {
+          if (!isMountedRef.current) return
           const text = typeof result === 'string' ? result : result?.data
           if (text) {
             handleScanResult(text)
@@ -80,11 +93,29 @@ export default function QRCodeScanner({
       )
 
       qrScannerRef.current = scanner
-      await scanner.start()
-      setIsScanning(true)
-      setStatus('Scanner running')
-    } catch (error) {
-      console.error('QR Scanner error:', error)
+      
+      try {
+        await scanner.start()
+        if (!isMountedRef.current) {
+          await scanner.stop()
+          scanner.destroy()
+          qrScannerRef.current = null
+          return
+        }
+        setIsScanning(true)
+        setStatus('Scanner running')
+      } catch (err: any) {
+        if (err.name === 'AbortError' || err.name === 'NotAllowedError') {
+          return
+        }
+        throw err
+      }
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        return
+      }
+      if (!isMountedRef.current) return
+      
       const message = error instanceof Error ? error.message : 'Unknown scanner error'
       setErrorMessage(message)
       setStatus('Unable to start scanner')
@@ -97,21 +128,58 @@ export default function QRCodeScanner({
       return
     }
 
-    await qrScannerRef.current.stop()
-    setIsScanning(false)
-    setStatus('Scanner stopped')
+    try {
+      await qrScannerRef.current.stop()
+      if (isMountedRef.current) {
+        setIsScanning(false)
+        setStatus('Scanner stopped')
+      }
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        return
+      }
+    }
   }, [])
 
   useEffect(() => {
+    isMountedRef.current = true
+
     if (autoStart) {
       startScanning()
     }
 
     return () => {
+      isMountedRef.current = false
+      
       if (qrScannerRef.current) {
-        qrScannerRef.current.stop()
-        qrScannerRef.current.destroy()
-        qrScannerRef.current = null
+        try {
+          qrScannerRef.current.stop().catch((err: any) => {
+            if (err.name !== 'AbortError') {
+              console.error('Error stopping scanner:', err)
+            }
+          })
+          qrScannerRef.current.destroy()
+        } catch (err: any) {
+          if (err.name !== 'AbortError') {
+            console.error('Error destroying scanner:', err)
+          }
+        } finally {
+          qrScannerRef.current = null
+        }
+      }
+
+      if (videoRef.current?.srcObject) {
+        try {
+          const stream = videoRef.current.srcObject as MediaStream
+          stream.getTracks().forEach(track => {
+            track.stop()
+          })
+          videoRef.current.srcObject = null
+        } catch (err: any) {
+          if (err.name !== 'AbortError') {
+            console.error('Error cleaning up video stream:', err)
+          }
+        }
       }
     }
   }, [autoStart, startScanning])

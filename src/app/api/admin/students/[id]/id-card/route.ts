@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAdminAuth } from '@/lib/middleware'
 import { prisma } from '@/lib/prisma'
-import QRCode from 'qrcode'
+import { generateQRCodeDataURL } from '@/lib/qrCodeUtils'
 
-async function handler(req: NextRequest, { params }: { params: { id: string } }) {
+async function handler(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   if (req.method !== 'GET') {
     return NextResponse.json({ error: 'Method not allowed' }, { status: 405 })
   }
 
   try {
-    const studentId = params.id
+    const { id } = await params
+    const studentId = id
 
     const student = await prisma.student.findUnique({
       where: { id: studentId },
@@ -35,18 +36,12 @@ async function handler(req: NextRequest, { params }: { params: { id: string } })
       )
     }
 
-    // Generate QR code for student
-    console.log('Generating QR code for student:', student.studentId, 'QR data:', student.qrCode)
-    const qrCodeDataUrl = await QRCode.toDataURL(student.qrCode, {
-      width: 200,
+    const qrCodeDataUrl = await generateQRCodeDataURL(student.qrCode || student.studentId, {
+      width: 512,
       margin: 2,
-      color: {
-        dark: '#000000',
-        light: '#FFFFFF'
-      }
+      errorCorrectionLevel: 'H'
     })
 
-    // Prepare student data for ID card
     const studentData = {
       id: student.id,
       studentId: student.studentId,
