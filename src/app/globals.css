@@ -1,5 +1,15 @@
 @import "tailwindcss";
 
+/* Hide Next.js dev error overlay */
+nextjs-portal,
+[data-nextjs-dialog],
+[data-nextjs-dialog-overlay],
+[data-nextjs-toast],
+#__next-build-indicator,
+[data-nextjs-scroll-focus-boundary] ~ div:has(> [data-nextjs-dialog]) {
+  display: none !important;
+}
+
 :root {
   --background: #ffffff;
   --foreground: #171717;
